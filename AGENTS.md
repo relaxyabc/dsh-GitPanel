@@ -15,7 +15,7 @@
 ## 2. 目录结构
 
 ```
-dsh-git-panel/         # 仓库根即包根(包名 GitPanel)
+dsh-GitPanel/           # 仓库根即包根(包名 GitPanel)
 ├─ package.json        # 清单:dsh.manifestVersion / client.inject / exports / files 白名单
 ├─ cordis.patch.yml    # Host 半的插入补丁(服务 id: GitPanel)
 ├─ index.js            # Host 半:发现、git 子进程、解析器、路由 —— 唯一允许碰文件系统与进程的文件
@@ -37,7 +37,7 @@ dsh-git-panel/         # 仓库根即包根(包名 GitPanel)
 4. **无 shell**。一切 `git` 调用走 `runGit`(`execFile` + argv 数组);用户可控的值只能作为独立 argv 元素传入,需要时保留 `--` 分隔符。禁止字符串拼接命令、禁止开启 shell。
 5. **错误即数据**。`runGit` 从不 reject —— git 用退出码表达"正常答案"(如路径未跟踪);要求成功时才用 `gitOrThrow`。`dispatch` 对一切失败返回 `{ ok: false, error }` 信封;HTTP 400 只用于非 JSON 请求体,413 只用于超过 `MAX_BODY_BYTES`,其余错误一律 200 + `ok:false`。
 6. **解析器与 git 输出一一对应**。`parsePorcelainV2`(`status --porcelain=v2 --branch -z`)、`parseNumstat`(`diff --numstat -z`)、`parseLog`(RS/US 记录分隔符,记录内不再按行解析)、`parseBranches`、`parseSubmodules` 都紧贴 git 的输出格式。改 git 参数就必须同步改解析器,并补 e2e 用例。
-7. **限额护栏**。`MAX_BODY_BYTES`、`GIT_TIMEOUT_MS`、`GIT_MAX_BUFFER`、`MAX_DISCOVERY_DEPTH`、`MAX_REPOSITORIES`、`MAX_DISCOVERY_ENTRIES`、`SKIPPED_DIRECTORIES` 是防失控的护栏。上调上限需要谨慎并在 PR 里说明动机;它们的存在理由优先于便利性。发现深度是插件配置 `discoveryDepth`(默认 3,运行时夹取到 1–`MAX_DISCOVERY_DEPTH`),`MAX_DISCOVERY_DEPTH` 始终是硬上限。该字段声明为 `volatile`,Loader 因此把实时引用交给插件、就地提交编辑而不重新 apply:Host 必须**每次调用时**解开这个引用读值(`effectiveDepth()`),不许在 apply 时缓存成数字;编辑入口是插件页面里**本包自己的配置位**(客户端 `configForms` + 共享设置表单,注册进 `plugins.bundle.config` 并以包名作 key),不新增自定义写操作,也不占用"官方"分组的 `plugins.item` 位置。
+7. **限额护栏**。`MAX_BODY_BYTES`、`GIT_TIMEOUT_MS`、`GIT_MAX_BUFFER`、`MAX_DISCOVERY_DEPTH`、`MAX_REPOSITORIES`、`MAX_DISCOVERY_ENTRIES`、`SKIPPED_DIRECTORIES` 是防失控的护栏。上调上限需要谨慎并在 PR 里说明动机;它们的存在理由优先于便利性。发现深度是插件配置 `discoveryDepth`(默认 3,运行时夹取到 1–`MAX_DISCOVERY_DEPTH`),`MAX_DISCOVERY_DEPTH` 始终是硬上限。该字段声明为 `volatile`,Loader 因此把实时引用交给插件、就地提交编辑而不重新 apply:Host 必须**每次调用时**解开这个引用读值(`effectiveDepth()`),不许在 apply 时缓存成数字;编辑入口是插件页面里**本包自己的配置位**(客户端 `configForms` + 共享设置表单,注册进 `plugins.bundle.config` 并以包名作 key),不新增自定义写操作,也不占用"官方"分组的 `plugins.item` 位置。`wholeFileDiff` 与深度同性质:也声明为 `volatile`,也必须按调用解引用(`effectiveWholeFileDiff()`),不许在 apply 时求值缓存。卡片本身按内置设置页的写法绘制:分组用 `section` + `h3` 标题,控件一律用共享 primitives(数值 `SettingsValueField`、开关 `Switch`、覆盖徽标 `Tag`),字段说明放标签旁的 ⓘ(`SettingsValueField` 的 `help`;开关行没有对应 primitive,自绘的按钮与披露区必须逐条对齐 primitives 的 `.helpButton` / `.help` 数值),不许自绘下拉框或常驻提示行。
 8. **不做昂贵的投机调用**。`git submodule status` 在没有任何子模块的仓库上也要整树扫描(实测约 1 s),只有声明了子模块的仓库(存在 `submodule.*.path` 配置或索引中的 mode-160000 gitlink)才允许执行它;请求页面时不得读取尚未被选中的提交的文件统计(历史读操作 `log` 不带 `--numstat`,单提交文件由 `commitFiles` 承担)。新增 `git` 调用前先量一次它的固定开销。
 9. **浏览器半保持零构建**。`client.js` 必须始终是可直接 `new Function(...)` 求值的纯脚本:经 `window.__ModuleLoader__.load({ id, factory(require) })` 注册,React 经 `require('react')` 获取。禁止 `import` 语句、JSX、TypeScript、任何打包器指令。
 10. **环境安全**。git 子进程环境保持 `GIT_TERMINAL_PROMPT=0` 与 `GIT_OPTIONAL_LOCKS=0`;不许添加会引入交互提示或仓库锁的设置。
@@ -53,7 +53,7 @@ dsh-git-panel/         # 仓库根即包根(包名 GitPanel)
 - **Host 半分层**:`parseXxx` 是纯函数、不碰 IO;`readXxx` / `writeXxx` 做 IO、不解析;对外操作名就是 `READ_OPERATIONS` / `WRITE_OPERATIONS` 的键,签名统一为 `(args) => Promise<object>`。
 - **浏览器半**:`const h = React.createElement`,一律用 `h()` 不用 JSX;组件是纯函数;上下文菜单数据驱动(`items` 数组)。
 - **UI 文案与国际化**:面向用户的字符串全部收在 `client.js` 顶部的 `en` / `zh` 双语词典里(命名空间 `gitPanel`,经 `ctx.locale.register` 注册、`ctx.locale.bind` 绑定),渲染代码一律通过 `t('key')` 取词,不许散落字面量;带参数的文案用 `{name}` 占位符 + `fill()` 填充;槽位组件经注册项 `locale: LOCALE_NS` 接收框架注入的 `t` prop,guide 条目等框架外读取用 apply 作用域绑定的 `t`。新增文案时 en/zh 两词典必须成对补齐;`locale/*.json` 只承载 `meta` 标题/描述,改动 meta 时 en/zh 同步。
-- **样式**:全部内联在 `STYLES` 数组;类名前缀 `git-panel-`;只用 `--dsw-alias-*` 设计令牌,且**每个令牌必须带字面回退值**。禁止硬编码颜色/字体替代令牌。
+- **样式**:全部内联在 `STYLES` 数组;类名前缀 `git-panel-`;只用 `--dsw-alias-*` 设计令牌,且**每个令牌必须带字面回退值**。禁止硬编码颜色/字体替代令牌。`<style>` 由渲染树里的 `StyleTag` 挂载,**每个会渲染 `git-panel-*` 类名的挂载点都必须渲染它**(目前是主面板、右侧边栏兜底卡、插件页配置卡片);漏掉一处不会报错,只会让该处的规则静默失效、退回页面默认排版 —— 配置卡片就踩过一次。
 - **语言约定**:代码、注释、标识符、UI 文案用英文;README 与本文件用中文。
 
 ## 5. 如何新增一个操作(标准流程)
@@ -79,7 +79,7 @@ node test/preview.mjs       # 改样式/布局后必跑,肉眼检查明暗两版
 
 - **通用**:断言一律走 `check(condition, label, detail)` 风格;测试自报进度(`ok` / `FAIL`),失败置 `process.exitCode = 1`;必须可离线运行,不许访问网络。
 - **host.e2e.mjs**:用 `mkdtempSync` 建一次性工作区,`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` 指向隔离配置(绝不读操作者身份),`finally` 里清理(除非 `DSH_GIT_KEEP=1`)。每个安全约束都要有对抗用例:路径越界、未知 `op`、缺失 `workspaceRoot`、非 JSON 请求体(400)。文件协议 submodule 等依赖 `protocol.file.allow=always` 的设置只写在测试环境里。
-- **client.smoke.mjs**:必须通过真实的 `window.__ModuleLoader__` 契约加载 `client.js`;React 替身维护每位置 hook 表,`useMemo`/`useCallback` 的依赖比较语义不许削弱;用 `settle()`/`drain()` 等 effect 与定时器落定后再断言。
+- **client.smoke.mjs**:必须通过真实的 `window.__ModuleLoader__` 契约加载 `client.js`;React 替身维护每位置 hook 表,`useMemo`/`useCallback` 的依赖比较语义不许削弱;用 `settle()`/`drain()` 等 effect 与定时器落定后再断言。替身中的 primitives 必须照官方契约实现(`SettingsValueField` 的 `help` 默认收起、点击展开;`Switch` 以 `aria-checked` 表达状态;`Tag` 只渲染文字),不许简化成恒真或永远展开。另注意该替身的 hook 表按"父元素 + 组件类型"缓存,**深层嵌套组件的 `useState` 不会跨渲染保留**,需要保留的折叠状态用测试作用域的集合模拟(见 `openedHelp`)。新增或改动挂载点时,断言注入的 CSS 里含该挂载点用到的规则。
 - **preview.mjs**:是视觉回归的产物生成器,不设断言;它输出的 `preview/git-panel.html` 不进版本库。
 
 ## 7. 清单与文档同步

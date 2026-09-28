@@ -103,6 +103,10 @@ const React = {
       hook.cleanup = typeof cleanup === 'function' ? cleanup : undefined
     }
   },
+  useRef(initial) {
+    const hook = slot(() => ({ value: { current: initial } }))
+    return hook.value
+  },
 }
 
 // ---- module loading ---------------------------------------------------------
@@ -120,6 +124,14 @@ globalThis.window = {
   },
   clearTimeout: () => {},
 }
+/**
+ * Help regions the settings-field stub has been asked to open, keyed by field id.
+ *
+ * The harness rebuilds a nested component's hook table on every pass, so the
+ * disclosure this stub would hold in `useState` lives here instead.
+ */
+const openedHelp = new Set()
+
 /**
  * The `@deepseek-ai/dsh-client-ui-primitives` stand-in: the shared settings form
  * and the staged form model the Plugins page card is built from. The model keeps
@@ -184,14 +196,42 @@ const primitivesStub = {
       React.createElement('button', { type: 'button', onClick: props.onSave }, props.labels.save),
       React.createElement('button', { type: 'button', onClick: props.onDiscard }, props.labels.readOnly),
     ),
-  SettingsValueField: (props) =>
-    React.createElement(
+  SettingsValueField: (props) => {
+    const open = openedHelp.has(props.id)
+    const message = props.invalid ? props.invalidLabel : props.hint
+    return React.createElement(
       'div',
       { className: 'stub-settings-field' },
       React.createElement('label', { htmlFor: props.id }, props.label),
+      props.help === undefined
+        ? null
+        : React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'stub-settings-help-button',
+              'aria-label': props.help.label,
+              'aria-expanded': String(open === true),
+              onClick: () => openedHelp.add(props.id),
+            },
+            props.help.label,
+          ),
       React.createElement('input', { id: props.id, value: props.text, disabled: props.disabled, onChange: (event) => props.onEdit(event.target.value) }),
-      props.invalid ? React.createElement('span', null, props.invalidLabel) : React.createElement('span', null, props.hint),
-    ),
+      message === undefined ? null : React.createElement('span', null, message),
+      props.help !== undefined && open ? React.createElement('div', { className: 'stub-settings-help' }, props.help.content) : null,
+    )
+  },
+  Tag: (props) => React.createElement('span', { className: 'stub-settings-tag' }, props.children),
+  IconInfoOutlineRegular: (props) => React.createElement('span', { className: 'stub-icon-info', 'aria-hidden': true, 'data-size': props.size }, 'i'),
+  Switch: (props) =>
+    React.createElement('button', {
+      type: 'button',
+      role: 'switch',
+      'aria-checked': String(props.checked === true),
+      'aria-label': props.label,
+      disabled: props.disabled,
+      onClick: () => props.onChange(props.checked !== true),
+    }),
 }
 
 globalThis.require = (name) => {
@@ -289,6 +329,9 @@ function trackedFetch(url, init) {
 /** The depth the fake Host currently has stored. */
 let serverDepth = 3
 
+/** The whole-file diff switch the fake Host currently has stored. */
+let serverWholeFile = false
+
 /** Whether the fake Host answers like a build that predates the newest operations. */
 let staleHost = false
 
@@ -307,8 +350,9 @@ function answerFor(request) {
     const root = typeof request.args?.workspaceRoot === 'string' && request.args.workspaceRoot !== '' ? request.args.workspaceRoot : WORKSPACE
     return {
       workspaceRoot: root,
-      // A Host build that predates the newest operations reports no depth.
-      ...(staleHost ? {} : { discoveryDepth: serverDepth }),
+      // A Host build that predates the newest operations reports no depth and
+      // no whole-file switch.
+      ...(staleHost ? {} : { discoveryDepth: serverDepth, wholeFileDiff: serverWholeFile }),
       repositories: [
         { path: `${root}/app`, name: 'app', relative: 'app', isSubmodule: false },
         { path: `${root}/libsource`, name: 'libsource', relative: 'libsource', isSubmodule: false },
@@ -715,14 +759,18 @@ check(text.includes('fix/rename-docs'), 'the local branches render')
 check(text.includes('feat: greet the world'), 'the commit subjects render')
 check(text.includes('index.ts'), 'the changed paths render')
 check(text.includes('Commit & push'), 'the commit controls render')
+check(text.includes('Fetch'), 'the toolbar offers a fetch')
+check(text.includes('Pull'), 'the toolbar offers a pull')
 check(text.includes('vendor/lib'), 'the submodule is listed')
 check(text.filter((entry) => entry === 'app').length >= 1, 'the repository name renders in the toolbar')
 
 console.log('\ntoolbar')
 const toolbarSelects = findAll(view.tree, (element) => element.type === 'select' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-select'))
 check(toolbarSelects.length >= 2, 'the workspace and repository fields always render', toolbarSelects.length)
-const workspaceSelect = toolbarSelects.find((element) => collectText(element).includes(WORKSPACE))
-check(workspaceSelect !== undefined, 'the workspace field shows the workspace directory', collectText(toolbarSelects[0]))
+const workspaceSelect = toolbarSelects.find((element) => collectText(element).includes('project'))
+check(workspaceSelect !== undefined, 'the workspace field shows the workspace name', collectText(toolbarSelects[0]))
+const workspaceOption = find(workspaceSelect, (element) => element.type === 'option')
+check(workspaceOption?.props?.title === WORKSPACE, 'the workspace option keeps the full path as its title', workspaceOption?.props)
 const repositorySelect = toolbarSelects.find((element) => collectText(element).includes('app'))
 check(repositorySelect !== undefined, 'the repository field shows the repository', collectText(toolbarSelects[1] ?? {}))
 const branchChip = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-branch-chip'))
@@ -754,8 +802,30 @@ localeState.current = 'en'
 const card = await render(cardComponent, { ...cardProps, view: 'page' })
 const depthInput = find(card.tree, (element) => element.props?.id === 'GitPanel-discovery-depth')
 check(depthInput !== undefined, 'the card renders the depth field', collectText(card.tree).slice(0, 6))
+const cardStyle = find(card.tree, (element) => element.type === 'style')
+const cardCss = Array.isArray(cardStyle?.children) ? cardStyle.children.flat().join('') : ''
+check(
+  cardCss.includes('.git-panel-config-toggle-row{') && cardCss.includes('.git-panel-config-help{') && cardCss.includes('.git-panel-config-help-button{'),
+  'the card carries the stylesheet its own classes need',
+  cardCss.length,
+)
 check(depthInput?.props?.value === '3', 'the field shows the configured value', depthInput?.props?.value)
-check(collectText(card.tree).some((entry) => entry.includes('scanned below the workspace root')), 'the field explains itself', collectText(card.tree).slice(0, 8))
+const helpButton = find(card.tree, (element) => element.props?.className === 'stub-settings-help-button')
+check(helpButton?.props?.['aria-label'] === 'About the discovery depth', 'the depth field names its explanation button', helpButton?.props)
+check(!collectText(card.tree).some((entry) => entry.includes('Directory levels scanned')), 'the explanation stays closed until it is asked for', collectText(card.tree).slice(0, 8))
+helpButton?.props?.onClick?.()
+const helped = await settle(card)
+check(
+  collectText(helped.tree).some((entry) => entry.includes('Directory levels scanned below the workspace root')) &&
+    collectText(helped.tree).some((entry) => entry.includes('clamped to 1-8')),
+  'the explanation button reveals the depth rules',
+  collectText(helped.tree).slice(-6),
+)
+check(
+  collectText(card.tree).includes('Repository discovery') && collectText(card.tree).includes('Diff display'),
+  'the card groups its settings under headings',
+  collectText(card.tree).slice(0, 8),
+)
 depthInput?.props?.onChange?.({ target: { value: '6' } })
 const staged = await settle(card)
 const saveButton = find(staged.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))
@@ -773,6 +843,51 @@ check(
   findAll(staged.tree, (element) => element.type === 'input' && element.props?.id === 'GitPanel-discovery-depth').length === 1,
   'the panel itself no longer carries a depth control',
   findAll(view.tree, (element) => element.type === 'select').map((element) => collectText(element)),
+)
+const wholeToggle = find(staged.tree, (element) => element.props?.role === 'switch')
+check(wholeToggle !== undefined, 'the card renders the whole-file switch', collectText(staged.tree).slice(-4))
+check(wholeToggle?.props?.['aria-checked'] === 'false', 'the whole-file switch starts off', wholeToggle?.props)
+const toggleHelpButton = find(staged.tree, (element) => element.props?.className === 'git-panel-config-help-button')
+check(toggleHelpButton?.props?.['aria-label'] === 'About the whole-file diff', 'the switch row names its explanation button', toggleHelpButton?.props)
+check(toggleHelpButton?.props?.['aria-controls'] === 'GitPanel-whole-file-help', 'the explanation button points at its region', toggleHelpButton?.props)
+check(!collectText(staged.tree).some((entry) => entry.includes('Off: only the changed hunks')), 'the switch row explains nothing until it is asked to', collectText(staged.tree).slice(-4))
+toggleHelpButton?.props?.onClick?.()
+const helpShown = await settle(staged)
+check(
+  collectText(helpShown.tree).some((entry) => entry.includes('Off: only the changed hunks are shown.')) &&
+    collectText(helpShown.tree).some((entry) => entry.includes('at most 3000 rows')),
+  'the explanation button reveals the whole-file rules',
+  collectText(helpShown.tree).slice(-6),
+)
+check(
+  find(helpShown.tree, (element) => element.props?.id === 'GitPanel-whole-file-help')?.props?.role === 'region',
+  'the revealed rules are a labelled region',
+  collectText(helpShown.tree).slice(-6),
+)
+wholeToggle?.props?.onClick?.()
+const toggled = await settle(helpShown)
+const onToggle = find(toggled.tree, (element) => element.props?.role === 'switch')
+check(onToggle?.props?.['aria-checked'] === 'true', 'clicking the switch stages the on state', onToggle?.props)
+check(collectText(toggled.tree).includes('modified'), 'a staged edit previews the override badge', collectText(toggled.tree).slice(-6))
+settingsWrites.length = 0
+find(toggled.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ops[0]?.op === 'set' && settingsWrites[0].ops[0]?.path?.[0] === 'wholeFileDiff' && settingsWrites[0].ops[0]?.value === true,
+  'saving writes the whole-file switch as a boolean',
+  settingsWrites,
+)
+settingsWrites.length = 0
+cardFace.resetField('wholeFileDiff')
+const resetView = await settle(toggled)
+const resetToggle = find(resetView.tree, (element) => element.props?.role === 'switch')
+check(resetToggle?.props?.['aria-checked'] === 'false', 'a cleared whole-file draft shows the inherited default', resetToggle?.props)
+find(resetView.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ops[0]?.op === 'unset' && settingsWrites[0].ops[0]?.path?.[0] === 'wholeFileDiff',
+  'resetting the whole-file switch clears the override',
+  settingsWrites,
 )
 const invalidCard = await render(cardComponent, { ...cardProps, view: 'page' })
 const invalidInput = find(invalidCard.tree, (element) => element.props?.id === 'GitPanel-discovery-depth')
@@ -882,6 +997,15 @@ check(removedCells.some((cell) => collectText(cell).includes('old line')), 'the 
 check(addedCells.some((cell) => collectText(cell).includes('new line')), 'the new line sits in the right column', addedCells.map((cell) => collectText(cell)))
 const lineNumbers = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-no')).map((cell) => collectText(cell).join(''))
 check(lineNumbers.join(',') === '1,1,,2', 'both columns carry line numbers, and a replaced pair shares the row', lineNumbers)
+const compactNavItems = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-nav-item'))
+check(compactNavItems.length >= 1, 'the compact diff lists its changes for jumping', compactNavItems.map((element) => collectText(element)))
+const navSteps = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-nav-step'))
+check(navSteps.length === 2 && typeof navSteps[1]?.props?.onClick === 'function', 'the change rail offers previous and next', navSteps.map((element) => collectText(element)))
+const overviewMarks = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-mark'))
+check(overviewMarks.length >= 1 && typeof overviewMarks[0]?.props?.onClick === 'function', 'the scroll overview marks each change and jumps to it', overviewMarks.map((element) => element.props?.style))
+overviewMarks[0]?.props?.onClick?.({ stopPropagation: () => {} })
+const overviewView = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-overview-view'))
+check(overviewView !== undefined, 'the scroll overview shows the visible range')
 // One file at a time: picking another row swaps the modal content in place.
 const indexRow = find(
   view.tree,
@@ -1041,6 +1165,57 @@ check(changeRow !== undefined, 'a changed path carries a context menu')
 changeRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
 view = await settle(view)
 check(view.text().includes('Show the diff'), 'the changed-path menu offers the diff', view.text().slice(-24))
+
+console.log('\nselect all and whole-file diff')
+requests.length = 0
+const bulkView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const selectAll = find(bulkView.tree, (element) => element.type === 'input' && element.props?.['aria-label'] === 'Select all')
+check(selectAll !== undefined, 'the working-tree pane offers a select-all checkbox', collectText(bulkView.tree).slice(0, 8))
+check(selectAll?.props?.checked === false, 'select-all starts unchecked', selectAll?.props)
+const fileChecks = findAll(bulkView.tree, (element) => element.type === 'input' && element.props?.title === 'Select this file')
+check(fileChecks.length === 3, 'each changed path carries a selection checkbox', fileChecks.length)
+check(fileChecks.every((element) => element.props.checked === false), 'every changed path starts unselected', fileChecks.map((element) => element.props.checked))
+check(collectText(bulkView.tree).includes('staged'), 'an already-staged path is marked as staged', collectText(bulkView.tree).filter((entry) => entry === 'staged'))
+selectAll?.props?.onChange?.()
+const bulkSelected = await settle(bulkView)
+check(!requests.some((entry) => entry.op === 'stage'), 'select-all only selects; it stages nothing', requests.map((entry) => entry.op))
+const selectedChecks = findAll(bulkSelected.tree, (element) => element.type === 'input' && element.props?.title === 'Select this file')
+check(selectedChecks.length === 3 && selectedChecks.every((element) => element.props.checked === true), 'select-all selects every changed path', selectedChecks.map((element) => element.props.checked))
+const stageSelection = find(bulkSelected.tree, (element) => element.type === 'button' && element.props?.title === 'Stage the selected files')
+check(stageSelection !== undefined, 'the pane offers staging the selection', collectText(bulkSelected.tree).slice(0, 12))
+stageSelection?.props?.onClick?.()
+await settle(bulkSelected)
+const stageSelectionRequest = requests.find((entry) => entry.op === 'stage')
+check(
+  stageSelectionRequest !== undefined && Array.isArray(stageSelectionRequest.args?.paths) && stageSelectionRequest.args.paths.length === 3,
+  'staging the selection sends exactly the selected paths',
+  stageSelectionRequest?.args,
+)
+
+serverWholeFile = true
+requests.length = 0
+const wholeView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const wholeRow = find(
+  wholeView.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onDoubleClick === 'function' && collectText(element).includes('index.ts'),
+)
+wholeRow?.props?.onDoubleClick?.()
+const wholeSettled = await settle(wholeView)
+const wholeRequest = requests.filter((entry) => entry.op === 'diff').pop()
+check(wholeRequest?.args?.wholeFile === true, 'the whole-file setting rides the diff request', wholeRequest?.args)
+const jumpButtons = findAll(wholeSettled.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-sbs-nav-item'))
+check(jumpButtons.length >= 1, 'the whole-file diff lists its changes beside the line numbers', jumpButtons.map((element) => collectText(element)))
+check(typeof jumpButtons[0]?.props?.onClick === 'function', 'a listed change is clickable')
+jumpButtons[0]?.props?.onClick?.()
+const wholeModal = find(wholeSettled.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-modal'))
+check(collectText(wholeModal).includes('whole file'), 'the modal names the whole-file view', collectText(wholeModal).slice(0, 10))
+serverWholeFile = false
 
 console.log('\nright-Sidebar tab is a door, not a page')
 requests.length = 0

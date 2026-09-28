@@ -36,11 +36,42 @@ window.__ModuleLoader__.load({
     /** Most side-by-side diff rows one modal renders before it truncates. */
     const MAX_DIFF_ROWS = 3000
 
+    /** Shared empty working-tree list, so an unchanged repository keeps a stable identity. */
+    const NO_FILES = []
+
     /** The plugin entry whose configuration the Plugins page card edits. */
     const SETTINGS_NS = 'GitPanel'
 
-    /** The one configuration field the Plugins page card edits. */
+    /** The discovery-depth configuration field the Plugins page card edits. */
     const DEPTH_FIELD = 'discoveryDepth'
+
+    /** The whole-file diff configuration field the Plugins page card edits. */
+    const WHOLE_FILE_FIELD = 'wholeFileDiff'
+
+    /** Section id of the settings card's discovery group, tying its heading to the region. */
+    const DISCOVERY_SECTION_ID = 'GitPanel-settings-discovery'
+
+    /** Section id of the settings card's diff-display group. */
+    const DISPLAY_SECTION_ID = 'GitPanel-settings-display'
+
+    /** Element id of the discovery-depth input, so its label points at the control. */
+    const DEPTH_INPUT_ID = 'GitPanel-discovery-depth'
+
+    /** Element id of the whole-file diff's disclosure region, so its button points at it. */
+    const WHOLE_FILE_HELP_ID = 'GitPanel-whole-file-help'
+
+    /**
+     * The whole-file switch's conversion spec.
+     *
+     * The shared form model speaks draft text, so the boolean setting is staged
+     * as `'true'` / `'false'` and parsed back to a real boolean on save; an
+     * unexpected draft blocks the save instead of writing a wrong value.
+     */
+    const WHOLE_FILE_SPEC = {
+      field: WHOLE_FILE_FIELD,
+      format: (value) => (value === true ? 'true' : 'false'),
+      parse: (text) => (text === '' ? { kind: 'clear' } : text === 'true' ? { kind: 'set', value: true } : text === 'false' ? { kind: 'set', value: false } : undefined),
+    }
 
     /**
      * The shared settings primitives the Plugins page form is built from.
@@ -154,14 +185,23 @@ window.__ModuleLoader__.load({
       'commitAll': 'Commit all',
       'commitPush': 'Commit & push',
       'push': 'Push',
-      'stageAll': 'Stage all',
-      'unstageAll': 'Unstage all',
+      'fetch': 'Fetch',
+      'pull': 'Pull',
+      'stageSelected': 'Stage selected',
+      'stageSelected.hint': 'Stage the selected files',
+      'unstageSelected': 'Unstage selected',
+      'unstageSelected.hint': 'Unstage the selected files',
+      'selectAll': 'Select all',
+      'selectFile': 'Select this file',
+      'staged': 'staged',
       'refresh': 'Refresh',
       'close': 'Close',
       'selectCommit': 'Select a commit to see its message and files',
       'menu.editMessage': 'Edit commit message',
       'depth': 'Maximum scan depth',
-      'depth.hint': 'Directory levels scanned below the workspace root (1-8)',
+      'depth.help': 'About the discovery depth',
+      'depth.help.body': 'Directory levels scanned below the workspace root when looking for Git repositories; the root itself is always scanned.',
+      'depth.help.note': 'Values are clamped to 1-8; the default is 3. Deeper scans find more repositories and take longer.',
       'settings.unavailable': 'This deployment does not serve the Git plugin configuration.',
       'settings.readOnly': 'This deployment stores configuration read-only.',
       'settings.saveFailed': 'The Host did not accept the change.',
@@ -180,7 +220,18 @@ window.__ModuleLoader__.load({
       'diff.binary': 'Binary file \u2014 no text diff',
       'diff.working': 'working tree',
       'diff.committed': 'commit {short}',
+      'diff.whole': 'whole file',
+      'diff.jump': 'Jump to line {line}',
+      'diff.changes': 'Changes',
+      'diff.prev': 'Previous change',
+      'diff.next': 'Next change',
       'diff.truncated': 'Only the first {count} diff rows are shown',
+      'wholeFileDiff': 'Whole-file diff',
+      'wholeFileDiff.help': 'About the whole-file diff',
+      'wholeFileDiff.help.body': 'Off: only the changed hunks are shown. On: both sides show the whole file, with every change listed beside the line numbers to jump to.',
+      'wholeFileDiff.help.note': 'Change navigation stays available either way. A diff modal renders at most 3000 rows.',
+      'config.discovery': 'Repository discovery',
+      'config.display': 'Diff display',
       'noWorkspace': 'No workspace is open yet.',
       'noRepository': 'No Git repository was found under this workspace.',
       'detached': 'detached HEAD',
@@ -205,6 +256,8 @@ window.__ModuleLoader__.load({
       'dialog.createBranch.confirm': 'Create and check out',
       'dialog.resetHard.warning': 'Every uncommitted change in the working tree will be discarded.',
       'dialog.deleteBranch.warning': 'The branch is removed only when it is already merged.',
+      'menu.stage': 'Stage',
+      'menu.unstage': 'Unstage',
       'menu.showDiff': 'Show the diff',
       'aheadBehind.title': 'commits ahead of and behind the upstream',
       'file.binary': 'binary',
@@ -216,9 +269,11 @@ window.__ModuleLoader__.load({
       'submodule.conflicted': 'conflicted',
       'working': 'Working\u2026',
       'copied': 'copied to the clipboard',
-      'notice.stagedAll': 'staged everything',
-      'notice.unstagedAll': 'unstaged everything',
+      'notice.stagedSelected': 'staged the selected files',
+      'notice.unstagedSelected': 'unstaged the selected files',
       'notice.pushed': 'pushed',
+      'notice.fetched': 'fetched from the remote',
+      'notice.pulled': 'pulled from the remote',
       'notice.switched': 'switched to {name}',
       'notice.checkedOut': 'checked out {name}',
       'notice.created': 'created {name}',
@@ -261,12 +316,21 @@ window.__ModuleLoader__.load({
       'commitAll': '全部提交',
       'commitPush': '提交并推送',
       'push': '推送',
-      'stageAll': '暂存全部',
-      'unstageAll': '取消全部暂存',
+      'fetch': '获取',
+      'pull': '拉取',
+      'stageSelected': '暂存选中',
+      'stageSelected.hint': '暂存选中的文件',
+      'unstageSelected': '取消暂存选中',
+      'unstageSelected.hint': '取消暂存选中的文件',
+      'selectAll': '全选',
+      'selectFile': '选中此文件',
+      'staged': '已暂存',
       'refresh': '刷新',
       'noWorkspace': '尚未打开任何工作区。',
       'depth': '最大递归深度',
-      'depth.hint': '工作区根目录下递归扫描的目录层数(1-8)',
+      'depth.help': '最大递归深度说明',
+      'depth.help.body': '用于发现 Git 仓库:从工作区根目录向下扫描的目录层数;工作区根目录本身始终会被扫描。',
+      'depth.help.note': '取值范围 1–8,默认 3。扫描越深,发现的仓库越多,耗时也越长。',
       'settings.unavailable': '当前部署未提供 Git 插件配置。',
       'settings.readOnly': '当前部署的配置为只读。',
       'settings.saveFailed': 'Host 未接受这次修改。',
@@ -285,7 +349,18 @@ window.__ModuleLoader__.load({
       'diff.binary': '二进制文件,无法展示文本差异',
       'diff.working': '工作区改动',
       'diff.committed': '提交 {short}',
+      'diff.whole': '整个文件',
+      'diff.jump': '跳转到第 {line} 行',
+      'diff.changes': '改动列表',
+      'diff.prev': '上一处改动',
+      'diff.next': '下一处改动',
       'diff.truncated': '仅展示前 {count} 行差异',
+      'wholeFileDiff': 'Diff 整文件对照',
+      'wholeFileDiff.help': '整文件对照说明',
+      'wholeFileDiff.help.body': '关闭:只显示改动的片段。开启:左右两栏显示整个文件,并在行号旁列出每处改动以供跳转。',
+      'wholeFileDiff.help.note': '无论开关如何,改动导航都可用;差异弹窗最多渲染 3000 行。',
+      'config.discovery': '仓库发现',
+      'config.display': '差异显示',
       'noRepository': '此工作区下未找到 Git 仓库。',
       'detached': '分离 HEAD',
       'files': '文件',
@@ -309,6 +384,8 @@ window.__ModuleLoader__.load({
       'dialog.createBranch.confirm': '创建并检出',
       'dialog.resetHard.warning': '工作区中所有未提交的改动都将被丢弃。',
       'dialog.deleteBranch.warning': '仅会删除已合并的分支。',
+      'menu.stage': '暂存',
+      'menu.unstage': '取消暂存',
       'menu.showDiff': '查看差异',
       'aheadBehind.title': '相对上游领先 / 落后的提交数',
       'file.binary': '二进制',
@@ -320,9 +397,11 @@ window.__ModuleLoader__.load({
       'submodule.conflicted': '有冲突',
       'working': '处理中…',
       'copied': '已复制到剪贴板',
-      'notice.stagedAll': '已暂存全部改动',
-      'notice.unstagedAll': '已取消全部暂存',
+      'notice.stagedSelected': '已暂存选中的文件',
+      'notice.unstagedSelected': '已取消暂存选中的文件',
       'notice.pushed': '已推送',
+      'notice.fetched': '已从远程获取',
+      'notice.pulled': '已从远程拉取',
       'notice.switched': '已切换到 {name}',
       'notice.checkedOut': '已检出 {name}',
       'notice.created': '已创建 {name}',
@@ -504,7 +583,9 @@ window.__ModuleLoader__.load({
       '.git-panel *{box-sizing:border-box}',
       '.git-panel-bar{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
       '.git-panel-bar-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}',
-      '.git-panel-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:360px}',
+      // The bar pads by 12px, so the field is the 320px column minus that inset
+      // to keep the workspace dropdown's right edge on the branch column's edge.
+      '.git-panel-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:calc(320px - 12px)}',
       '.git-panel-field-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-field .git-panel-select{width:100%;max-width:none;padding:3px 8px}',
       '.git-panel-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
@@ -521,13 +602,13 @@ window.__ModuleLoader__.load({
       '.git-panel-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 26%,transparent)}',
       '.git-panel-cols{flex:1;min-height:0;display:flex}',
       '.git-panel-col{display:flex;flex-direction:column;min-height:0;min-width:0}',
-      '.git-panel-col-left{width:268px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-col-left{width:320px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
       '.git-panel-col-mid{flex:1;min-width:220px}',
       '.git-panel-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
       '.git-panel-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
       '.git-panel-pane-top{flex:1 1 46%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-pane-grow{flex:1}',
-      '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
       '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
@@ -574,7 +655,30 @@ window.__ModuleLoader__.load({
       '.git-panel-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
       '.git-panel-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
       '.git-panel-banner-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#9a6700) 14%,transparent);color:var(--dsw-alias-state-warn-primary,#9a6700)}',
-      '.git-panel-sbs{display:flex;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;tab-size:4}',
+      '.git-panel-sbs-layout{flex:1;min-height:0;display:flex;align-items:stretch}',
+      '.git-panel-sbs-scroll{flex:1;min-width:0;min-height:0;overflow:auto}',
+      '.git-panel-sbs-wrap{display:flex;align-items:flex-start;min-height:100%}',
+      '.git-panel-sbs{flex:1;min-width:0;display:flex;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;tab-size:4}',
+      '.git-panel-sbs-nav{position:sticky;top:0;align-self:flex-start;flex:none;display:flex;flex-direction:column;width:54px;max-height:80vh;overflow:auto;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
+      '.git-panel-sbs-nav-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:2px;padding:2px 1px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
+      '.git-panel-sbs-nav-step{flex:none;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;padding:0;border:0;border-radius:3px;background:none;color:inherit;font:inherit;font-size:10px;cursor:pointer}',
+      '.git-panel-sbs-nav-step:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.24))}',
+      '.git-panel-sbs-nav-step:disabled{opacity:.35;cursor:default}',
+      '.git-panel-sbs-nav-count{flex:none;font-family:ui-monospace,monospace;font-size:9px;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-sbs-nav-item{display:flex;align-items:center;justify-content:flex-end;gap:3px;border:0;background:none;color:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.5;padding:1px 7px;cursor:pointer;white-space:nowrap}',
+      '.git-panel-sbs-nav-item:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
+      '.git-panel-sbs-nav-current,.git-panel-sbs-nav-current:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 24%,transparent)}',
+      '.git-panel-sbs-nav-add{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-sbs-nav-del{color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-sbs-nav-change{color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-sbs-overview{position:relative;flex:none;width:14px;overflow:hidden;cursor:pointer;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
+      '.git-panel-sbs-overview-view{position:absolute;left:0;right:0;border-radius:2px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.22));pointer-events:none}',
+      '.git-panel-sbs-mark{position:absolute;left:2px;right:2px;min-height:3px;padding:0;border:0;border-radius:2px;background:var(--dsw-alias-brand-primary,#0969da);cursor:pointer}',
+      '.git-panel-sbs-mark-add{background:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-sbs-mark-del{background:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-sbs-mark-change{background:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-sbs-mark-current{outline:1px solid var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-sbs-row{scroll-margin-top:26px}',
       '.git-panel-sbs-columns{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24))}',
       '.git-panel-sbs-column{padding:3px 9px;font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-sbs-hunk{padding:3px 9px;color:var(--dsw-alias-brand-primary,#0969da);background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
@@ -597,12 +701,33 @@ window.__ModuleLoader__.load({
       '.git-panel-modal{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1180px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3);overflow:hidden}',
       '.git-panel-modal-head{flex:none;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
       '.git-panel-modal-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.git-panel-modal-body{flex:1;min-height:0;overflow:auto}',
+      '.git-panel-modal-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}',
       '.git-panel-launch{display:flex;flex-direction:column;gap:10px;padding:14px}',
       '.git-panel-launch-title{font-weight:600;font-size:13px}',
       '.git-panel-launch-text{color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-launch-icon{color:var(--dsw-alias-brand-primary,#0969da)}',
       '.git-panel-launch-actions{display:flex;margin-top:2px}',
+      // The configuration card mirrors the built-in settings pages: each group is
+      // a section with its own heading, and the controls are the shared field and
+      // switch primitives, whose own stylesheet the framework supplies.
+      '.git-panel-config-section{min-width:0;padding:16px 0}',
+      '.git-panel-config-heading{margin:0;font-size:13px;font-weight:600;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:16px}',
+      '.git-panel-config-toggle{display:grid;gap:6px;padding:12px 0}',
+      '.git-panel-config-toggle-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-config-toggle-label{display:flex;align-items:center;gap:4px;flex:1;min-width:0}',
+      '.git-panel-config-badges{display:inline-flex;flex:none;align-items:center;gap:8px}',
+      '.git-panel-config-reset{padding:0;border:0;background:none;font:inherit;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#57606a);cursor:pointer}',
+      '.git-panel-config-reset:hover:not(:disabled){color:var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-config-reset:disabled{cursor:default}',
+      // The switch's info button and its disclosure copy the shared field's own
+      // rules, so both settings show the same control with the same type.
+      '.git-panel-config-help-button{display:inline-flex;flex:none;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:var(--dsw-alias-label-tertiary,#8b949e);cursor:pointer}',
+      '.git-panel-config-help-button:hover,.git-panel-config-help-button[aria-expanded="true"]{background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.1));color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-config-help-button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#0969da);outline-offset:1px}',
+      '.git-panel-config-help{padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-config-help>p{margin:0}',
+      '.git-panel-config-help>p+p{margin-top:8px}',
     ].join('\n')
 
     /**
@@ -822,50 +947,226 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The contiguous changed regions of a parsed diff, in reading order.
+     *
+     * A run is one or more adjacent non-context rows. Each run records where it
+     * starts among the rendered rows, so the overview ruler can place it in
+     * proportion to the whole diff, and the key of the row a click should reveal.
+     *
+     * @param {Array<object>} hunks - the parsed hunks.
+     * @returns {{ runs: Array<object>, total: number }} the runs and the rendered row count.
+     */
+    function changeRunsOf(hunks) {
+      const runs = []
+      let open = false
+      let row = 1 // The sticky column header is the first rendered row.
+      hunks.forEach((hunk, hunkIndex) => {
+        open = false
+        row += 1 // The hunk header.
+        hunk.rows.forEach((entry, rowIndex) => {
+          if (entry.kind === 'context') {
+            open = false
+            row += 1
+            return
+          }
+          if (open) {
+            runs[runs.length - 1].count += 1
+            row += 1
+            return
+          }
+          open = true
+          const line = entry.rightNo ?? entry.leftNo
+          runs.push({
+            key: `${hunkIndex}-${rowIndex}`,
+            kind: entry.kind === 'add' ? 'add' : entry.kind === 'del' ? 'del' : 'change',
+            line,
+            label: line === null ? '+' : String(line),
+            count: 1,
+            start: row,
+          })
+          row += 1
+        })
+      })
+      return { runs, total: row }
+    }
+
+    /**
      * Render one unified diff as two aligned columns with line numbers.
+     *
+     * Three navigation aids mirror an IDE diff: a sticky rail beside the line
+     * numbers with previous/next controls, a proportional overview ruler that
+     * places every change where it sits in the diff and shows the visible range,
+     * and click-to-jump on both. In whole-file mode the diff also carries the
+     * entire file on both sides; the compact default keeps the context short.
      *
      * @param {object} props - the diff text and the translate function.
      * @returns {object} the side-by-side element.
      */
     function SideBySideDiff({ text, t = boundTranslate }) {
       const parsed = React.useMemo(() => parseUnifiedDiff(text), [text])
+      const geometry = React.useMemo(() => changeRunsOf(parsed.hunks), [parsed])
+      const runs = geometry.runs
+      const anchors = React.useRef({})
+      const scrollRef = React.useRef(null)
+      const [current, setCurrent] = React.useState(-1)
+      const [viewport, setViewport] = React.useState({ top: 0, height: 1 })
+
+      /**
+       * Measure the scroll viewport so the ruler shows the visible range.
+       *
+       * @returns {undefined} nothing.
+       */
+      const measure = () => {
+        const element = scrollRef.current
+        if (element === null || element === undefined) return
+        const span = element.scrollHeight
+        if (!Number.isFinite(span) || span <= 0) return
+        setViewport({ top: element.scrollTop / span, height: Math.min(1, element.clientHeight / span) })
+      }
+
+      React.useEffect(() => {
+        measure()
+      }, [text])
+
+      /**
+       * Scroll to the fraction of the diff the pointer landed on.
+       *
+       * @param {object} event - the ruler click.
+       * @returns {undefined} nothing.
+       */
+      const scrollToFraction = (event) => {
+        const element = scrollRef.current
+        const rect = typeof event?.currentTarget?.getBoundingClientRect === 'function' ? event.currentTarget.getBoundingClientRect() : undefined
+        if (element === null || element === undefined || rect === undefined || rect.height === 0) return
+        const fraction = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
+        const scrollable = element.scrollHeight - element.clientHeight
+        if (scrollable > 0) element.scrollTop = fraction * scrollable
+      }
+
+      /**
+       * Build the ref callback that records one row's element under its key.
+       *
+       * @param {string} key - the row's hunk-row key.
+       * @returns {Function} the ref callback.
+       */
+      const anchorFor = (key) => (element) => {
+        if (element === null || element === undefined) delete anchors.current[key]
+        else anchors.current[key] = element
+      }
+
+      /**
+       * Reveal one change run and remember it as the current one.
+       *
+       * @param {number} index - the run's position.
+       * @returns {undefined} nothing.
+       */
+      const jumpTo = (index) => {
+        const run = runs[index]
+        if (run === undefined) return
+        setCurrent(index)
+        const element = anchors.current[run.key]
+        if (element !== undefined && typeof element.scrollIntoView === 'function') element.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }
+
       if (parsed.binary) return h('div', { className: 'git-panel-empty' }, t('diff.binary'))
       if (parsed.hunks.length === 0) return h('div', { className: 'git-panel-empty' }, t('diff.empty'))
-      return h(
-        'div',
-        { className: 'git-panel-sbs' },
-        h(
-          'div',
-          { className: 'git-panel-sbs-columns' },
-          h('span', { className: 'git-panel-sbs-column' }, t('diff.before')),
-          h('span', { className: 'git-panel-sbs-column' }, t('diff.after')),
-        ),
-        parsed.hunks.map((hunk, hunkIndex) =>
-          h(
-            'div',
-            { key: `hunk-${hunkIndex}` },
-            h('div', { className: 'git-panel-sbs-hunk' }, hunk.header),
-            hunk.rows.map((row, rowIndex) =>
+      const rail =
+        runs.length === 0
+          ? null
+          : h(
+              'div',
+              { className: 'git-panel-sbs-nav', 'aria-label': t('diff.changes') },
               h(
                 'div',
-                { key: `row-${hunkIndex}-${rowIndex}`, className: 'git-panel-sbs-row' },
-                h('span', { className: 'git-panel-sbs-no' }, row.leftNo === null ? '' : String(row.leftNo)),
+                { className: 'git-panel-sbs-nav-head' },
+                h('button', { type: 'button', className: 'git-panel-sbs-nav-step', disabled: current <= 0, title: t('diff.prev'), onClick: () => jumpTo(current > 0 ? current - 1 : 0) }, UP),
+                h('span', { className: 'git-panel-sbs-nav-count' }, `${current < 0 ? DASH : current + 1}/${runs.length}`),
+                h('button', { type: 'button', className: 'git-panel-sbs-nav-step', disabled: current >= runs.length - 1, title: t('diff.next'), onClick: () => jumpTo(current < 0 ? 0 : current + 1) }, DOWN),
+              ),
+              runs.map((run, index) =>
                 h(
-                  'span',
-                  { className: cx('git-panel-sbs-cell', row.left === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'del' ? 'git-panel-sbs-del' : false) },
-                  row.left === null ? '' : row.left,
-                ),
-                h('span', { className: 'git-panel-sbs-no' }, row.rightNo === null ? '' : String(row.rightNo)),
-                h(
-                  'span',
-                  { className: cx('git-panel-sbs-cell', row.right === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'add' ? 'git-panel-sbs-add' : false) },
-                  row.right === null ? '' : row.right,
+                  'button',
+                  {
+                    key: `nav-${index}`,
+                    type: 'button',
+                    className: cx('git-panel-sbs-nav-item', index === current ? 'git-panel-sbs-nav-current' : false, `git-panel-sbs-nav-${run.kind}`),
+                    title: fill(t('diff.jump'), { line: run.label }),
+                    onClick: () => jumpTo(index),
+                  },
+                  run.label,
                 ),
               ),
+            )
+      const overview =
+        runs.length === 0
+          ? null
+          : h(
+              'div',
+              { className: 'git-panel-sbs-overview', 'aria-label': t('diff.changes'), title: t('diff.changes'), onClick: scrollToFraction },
+              h('div', { className: 'git-panel-sbs-overview-view', style: { top: `${viewport.top * 100}%`, height: `${viewport.height * 100}%` } }),
+              runs.map((run, index) =>
+                h('button', {
+                  key: `mark-${index}`,
+                  type: 'button',
+                  className: cx('git-panel-sbs-mark', `git-panel-sbs-mark-${run.kind}`, index === current ? 'git-panel-sbs-mark-current' : false),
+                  style: { top: `${((run.start - 1) / geometry.total) * 100}%`, height: `${(run.count / geometry.total) * 100}%` },
+                  title: fill(t('diff.jump'), { line: run.label }),
+                  onClick: (event) => {
+                    event.stopPropagation()
+                    jumpTo(index)
+                  },
+                }),
+              ),
+            )
+      return h(
+        'div',
+        { className: 'git-panel-sbs-layout' },
+        h(
+          'div',
+          { className: 'git-panel-sbs-scroll', ref: scrollRef, onScroll: measure },
+          h(
+            'div',
+            { className: 'git-panel-sbs-wrap' },
+            rail,
+            h(
+              'div',
+              { className: 'git-panel-sbs' },
+              h(
+                'div',
+                { className: 'git-panel-sbs-columns' },
+                h('span', { className: 'git-panel-sbs-column' }, t('diff.before')),
+                h('span', { className: 'git-panel-sbs-column' }, t('diff.after')),
+              ),
+              parsed.hunks.map((hunk, hunkIndex) =>
+                h(
+                  'div',
+                  { key: `hunk-${hunkIndex}` },
+                  h('div', { className: 'git-panel-sbs-hunk' }, hunk.header),
+                  hunk.rows.map((row, rowIndex) =>
+                    h(
+                      'div',
+                      { key: `row-${hunkIndex}-${rowIndex}`, className: 'git-panel-sbs-row', ref: anchorFor(`${hunkIndex}-${rowIndex}`) },
+                      h('span', { className: 'git-panel-sbs-no' }, row.leftNo === null ? '' : String(row.leftNo)),
+                      h(
+                        'span',
+                        { className: cx('git-panel-sbs-cell', row.left === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'del' ? 'git-panel-sbs-del' : false) },
+                        row.left === null ? '' : row.left,
+                      ),
+                      h('span', { className: 'git-panel-sbs-no' }, row.rightNo === null ? '' : String(row.rightNo)),
+                      h(
+                        'span',
+                        { className: cx('git-panel-sbs-cell', row.right === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'add' ? 'git-panel-sbs-add' : false) },
+                        row.right === null ? '' : row.right,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              parsed.truncated ? h('div', { className: 'git-panel-empty' }, fill(t('diff.truncated'), { count: MAX_DIFF_ROWS })) : null,
             ),
           ),
         ),
-        parsed.truncated ? h('div', { className: 'git-panel-empty' }, fill(t('diff.truncated'), { count: MAX_DIFF_ROWS })) : null,
+        overview,
       )
     }
 
@@ -875,7 +1176,7 @@ window.__ModuleLoader__.load({
      * @param {object} props - row inputs.
      * @returns {object} the row element.
      */
-    function ChangeRow({ file, busy, selected, onToggle, onSelect, onOpen, onContextMenu, t = boundTranslate }) {
+    function ChangeRow({ file, busy, selected, picked, onToggle, onSelect, onOpen, onContextMenu, t = boundTranslate }) {
       return h(
         'div',
         {
@@ -893,14 +1194,15 @@ window.__ModuleLoader__.load({
         h('input', {
           type: 'checkbox',
           className: 'git-panel-check',
-          checked: file.staged === true,
+          checked: picked === true,
           disabled: busy,
-          title: file.staged === true ? t('unstageAll') : t('stageAll'),
+          title: t('selectFile'),
           onClick: (event) => event.stopPropagation(),
           onChange: () => onToggle(file),
         }),
         h('span', { className: cx('git-panel-status', `git-panel-status-${statusText(file.status)}`) }, statusText(file.status)),
         h('span', { className: 'git-panel-branch' }, basename(file.path)),
+        file.staged === true ? h('span', { className: 'git-panel-chip', title: t('staged') }, t('staged')) : null,
         h(
           'span',
           { className: 'git-panel-numstat' },
@@ -1003,10 +1305,10 @@ window.__ModuleLoader__.load({
      * Host that predates commit-aware diffs answers every commit file with an
      * empty worktree diff, which must not read as "this commit changed nothing".
      *
-     * @param {object} props - the selected file, its diff, the owning commit, whether the Host is older, and close.
+     * @param {object} props - the selected file, its diff, the owning commit, whether the Host is older, whether the whole file is shown, and close.
      * @returns {object} the modal element.
      */
-    function DiffModal({ file, commit, text, stale, onClose, t = boundTranslate }) {
+    function DiffModal({ file, commit, text, stale, whole, onClose, t = boundTranslate }) {
       React.useEffect(() => {
         const onKey = (event) => {
           if (event.key === 'Escape') onClose()
@@ -1034,12 +1336,28 @@ window.__ModuleLoader__.load({
             h('span', { className: 'git-panel-modal-title', title: file.path }, basename(file.path)),
             h('span', { className: 'git-panel-sub', title: file.path }, file.path),
             h('span', { className: 'git-panel-chip' }, commit === null ? t('diff.working') : fill(t('diff.committed'), { short: commit.short })),
+            whole === true ? h('span', { className: 'git-panel-chip' }, t('diff.whole')) : null,
             h('span', { className: 'git-panel-spacer' }),
             h('button', { type: 'button', className: 'git-panel-btn', onClick: onClose, title: t('close') }, CLOSE_GLYPH),
           ),
           h('div', { className: 'git-panel-modal-body' }, body),
         ),
       )
+    }
+
+    /**
+     * The two paragraphs every settings explanation is made of.
+     *
+     * The first says what the setting does; the second states its bounds and
+     * what turning it on costs. Both fields use it, so their disclosures read
+     * the same whether the primitive draws them or the card does.
+     *
+     * @param {string} body - what the setting does.
+     * @param {string} note - its bounds and its cost.
+     * @returns {object} the disclosure's content.
+     */
+    function helpParagraphs(body, note) {
+      return h(React.Fragment, null, h('p', null, body), h('p', null, note))
     }
 
     /**
@@ -1052,12 +1370,21 @@ window.__ModuleLoader__.load({
      * only on save, which is the page's own contract — the plugin never commits
      * a value the user did not confirm.
      *
+     * The controls are the shared ones the built-in settings pages use — the
+     * value field for the depth and the switch in a label row for the boolean —
+     * so this card reads as one more page of the same settings surface rather
+     * than a hand-drawn form.
+     *
      * @param {object} props - the form snapshot and the form actions.
      * @returns {object} the form.
      */
     function GitSettingsCard(props) {
       const { t } = props
       const state = props.useGitSettings((snapshot) => snapshot)
+      const [wholeFileHelp, setWholeFileHelp] = React.useState(false)
+      // A cleared draft inherits the composition default (off), so the switch
+      // previews the value a save would leave rather than the raw draft text.
+      const wholeFile = state[WHOLE_FILE_FIELD].text === 'true'
       return h(
         primitives.SettingsForm,
         {
@@ -1072,21 +1399,92 @@ window.__ModuleLoader__.load({
           onSave: props.save,
           onDiscard: props.discard,
         },
-        h(primitives.SettingsValueField, {
-          id: 'GitPanel-discovery-depth',
-          label: t('depth'),
-          hint: t('depth.hint'),
-          overriddenLabel: t('settings.overridden'),
-          resetLabel: t('settings.reset'),
-          invalidLabel: t('settings.invalidNumber'),
-          numeric: true,
-          disabled: state.writable !== true,
-          text: state[DEPTH_FIELD].text,
-          overridden: state[DEPTH_FIELD].overridden,
-          invalid: state[DEPTH_FIELD].invalid,
-          onEdit: (text) => props.edit(DEPTH_FIELD, text),
-          onReset: () => props.resetField(DEPTH_FIELD),
-        }),
+        // This card is a separate mount from the panel and the tab door, so it
+        // carries its own copy of the token-only stylesheet: without it none of
+        // the `git-panel-config-*` rules apply here and the card falls back to
+        // the surrounding page's type, which is exactly what made the two
+        // explanations disagree.
+        h(StyleTag, null),
+        h(
+          'section',
+          { className: 'git-panel-config-section', 'aria-labelledby': DISCOVERY_SECTION_ID },
+          h('h3', { className: 'git-panel-config-heading', id: DISCOVERY_SECTION_ID }, t('config.discovery')),
+          h(
+            'div',
+            { className: 'git-panel-config-grid' },
+            h(primitives.SettingsValueField, {
+              id: DEPTH_INPUT_ID,
+              label: t('depth'),
+              // The explanation lives behind the info button beside the label,
+              // the way the built-in settings pages disclose a field's rules.
+              help: { label: t('depth.help'), content: helpParagraphs(t('depth.help.body'), t('depth.help.note')) },
+              overriddenLabel: t('settings.overridden'),
+              resetLabel: t('settings.reset'),
+              invalidLabel: t('settings.invalidNumber'),
+              numeric: true,
+              disabled: state.writable !== true,
+              text: state[DEPTH_FIELD].text,
+              overridden: state[DEPTH_FIELD].overridden,
+              invalid: state[DEPTH_FIELD].invalid,
+              onEdit: (text) => props.edit(DEPTH_FIELD, text),
+              onReset: () => props.resetField(DEPTH_FIELD),
+            }),
+          ),
+        ),
+        h(
+          'section',
+          { className: 'git-panel-config-section', 'aria-labelledby': DISPLAY_SECTION_ID },
+          h('h3', { className: 'git-panel-config-heading', id: DISPLAY_SECTION_ID }, t('config.display')),
+          h(
+            'div',
+            { className: 'git-panel-config-toggle' },
+            h(
+              'div',
+              { className: 'git-panel-config-toggle-row' },
+              h(
+                'div',
+                { className: 'git-panel-config-toggle-label' },
+                h('span', null, t('wholeFileDiff')),
+                // A switch has no field primitive to draw its info button, so
+                // it is mirrored here: both settings disclose their rules the
+                // same way, in the same place, with the same type.
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'git-panel-config-help-button',
+                    'aria-label': t('wholeFileDiff.help'),
+                    'aria-expanded': wholeFileHelp,
+                    'aria-controls': WHOLE_FILE_HELP_ID,
+                    onClick: () => setWholeFileHelp(wholeFileHelp !== true),
+                  },
+                  h(primitives.IconInfoOutlineRegular, { size: 12 }),
+                ),
+              ),
+              state[WHOLE_FILE_FIELD].overridden
+                ? h(
+                    'span',
+                    { className: 'git-panel-config-badges' },
+                    h(primitives.Tag, { tone: 'neutral' }, t('settings.overridden')),
+                    h('button', { type: 'button', className: 'git-panel-config-reset', disabled: state.writable !== true, onClick: () => props.resetField(WHOLE_FILE_FIELD) }, t('settings.reset')),
+                  )
+                : null,
+              h(primitives.Switch, {
+                checked: wholeFile,
+                label: t('wholeFileDiff'),
+                disabled: state.writable !== true,
+                onChange: (next) => props.edit(WHOLE_FILE_FIELD, next === true ? 'true' : 'false'),
+              }),
+            ),
+            wholeFileHelp === true
+              ? h(
+                  'div',
+                  { id: WHOLE_FILE_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('wholeFileDiff.help') },
+                  helpParagraphs(t('wholeFileDiff.help.body'), t('wholeFileDiff.help.note')),
+                )
+              : null,
+          ),
+        ),
       )
     }
 
@@ -1097,8 +1495,8 @@ window.__ModuleLoader__.load({
      * @returns {{ inject: Function, dispose: Function }} the card's slot face and its disposer.
      */
     function createSettingsCard(configForms) {
-      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD)])
-      const store = form.bind(() => ({ ...form.shell(), [DEPTH_FIELD]: form.field(DEPTH_FIELD) }))
+      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC])
+      const store = form.bind(() => ({ ...form.shell(), [DEPTH_FIELD]: form.field(DEPTH_FIELD), [WHOLE_FILE_FIELD]: form.field(WHOLE_FILE_FIELD) }))
       return {
         /**
          * The face the card's slot registration injects.
@@ -1165,8 +1563,13 @@ window.__ModuleLoader__.load({
       const [message, setMessage] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [reposLoading, setReposLoading] = React.useState(false)
-      const [repoLoading, setRepoLoading] = React.useState(false)
-      const [reloadToken, setReloadToken] = React.useState(0)
+      const [stateLoading, setStateLoading] = React.useState(false)
+      const [logLoading, setLogLoading] = React.useState(false)
+      const [reposToken, setReposToken] = React.useState(0)
+      const [stateToken, setStateToken] = React.useState(0)
+      const [logToken, setLogToken] = React.useState(0)
+      const [wholeFileDiff, setWholeFileDiff] = React.useState(false)
+      const [selectedPaths, setSelectedPaths] = React.useState(() => new Set())
       const [error, setError] = React.useState(null)
       const [staleHost, setStaleHost] = React.useState(false)
       const [notice, setNotice] = React.useState(null)
@@ -1175,8 +1578,14 @@ window.__ModuleLoader__.load({
       const [branchFilter, setBranchFilter] = React.useState('')
       const [groups, setGroups] = React.useState({ local: true, remote: false, submodules: true })
 
-      /** Whether either access is still in flight; the toolbar reports it. */
-      const loading = reposLoading || repoLoading
+      /**
+       * Whether a load the user should see is in flight.
+       *
+       * Only discovery and the first read of a repository report here. A later
+       * state-only reload — what staging a path triggers — stays quiet, so
+       * toggling a checkbox never flashes a toolbar spinner.
+       */
+      const loading = reposLoading || (state === null && (stateLoading || logLoading))
 
       // The panel follows the conversation: when the main-view Session changes,
       // a stale manual workspace pick must not survive into the new Session.
@@ -1224,8 +1633,18 @@ window.__ModuleLoader__.load({
 
       const workspaceReady = typeof workspaceRoot === 'string' && workspaceRoot !== '' && repository !== null
 
-      /** Reload the selected workspace, repository and history. */
-      const refresh = React.useCallback(() => setReloadToken((value) => value + 1), [])
+      /** Reload the selected workspace's repositories, its state, and its history. */
+      const refresh = React.useCallback(() => {
+        setReposToken((value) => value + 1)
+        setStateToken((value) => value + 1)
+        setLogToken((value) => value + 1)
+      }, [])
+
+      /** Reload only the working tree and branch picture, leaving discovery and history alone. */
+      const refreshState = React.useCallback(() => setStateToken((value) => value + 1), [])
+
+      /** Reload only the commit history. */
+      const refreshLog = React.useCallback(() => setLogToken((value) => value + 1), [])
 
       // Discovery is keyed by the workspace alone, so switching repository
       // inside a workspace never walks that workspace again.
@@ -1245,10 +1664,14 @@ window.__ModuleLoader__.load({
             if (cancelled) return
             setRepositories(Array.isArray(payload.repositories) ? payload.repositories : [])
             setRepositoriesRoot(workspaceRoot)
-            // `discoveryDepth` is part of the current contract: a Host that does
-            // not report it serves an older build, and saying so beats letting
-            // the user discover it through a failed operation.
-            setStaleHost(!Number.isFinite(payload.discoveryDepth))
+            // The whole-file switch rides the same discovery answer as the
+            // depth, so the panel reads the setting the Host has in force.
+            setWholeFileDiff(payload.wholeFileDiff === true)
+            // `discoveryDepth` and `wholeFileDiff` are part of the current
+            // contract: a Host that reports neither serves an older build, and
+            // naming that beats letting the user discover it through a failed
+            // fetch or an ignored whole-file switch.
+            setStaleHost(!Number.isFinite(payload.discoveryDepth) || typeof payload.wholeFileDiff !== 'boolean')
           })
           .catch((failure) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
@@ -1259,35 +1682,60 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [workspaceRoot, reloadToken])
+      }, [workspaceRoot, reposToken])
 
-      // The selected repository's own state, reloaded whenever it changes.
+      // The selected repository's working-tree picture. A state-scoped mutation
+      // reloads only this, so staging a path costs one cheap status read instead
+      // of the whole discovery walk and a fresh history page.
       React.useEffect(() => {
         let cancelled = false
         if (repository === null) {
           setState(null)
-          setCommits([])
+          setStateLoading(false)
           return undefined
         }
-        setRepoLoading(true)
+        setStateLoading(true)
         setError(null)
-        const calls = [callHost('state', { workspaceRoot, path: repository.path }), callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE })]
-        Promise.all(calls)
-          .then(([nextState, nextLog]) => {
-            if (cancelled) return
-            setState(nextState)
-            setCommits(Array.isArray(nextLog.commits) ? nextLog.commits : [])
+        callHost('state', { workspaceRoot, path: repository.path })
+          .then((payload) => {
+            if (!cancelled) setState(payload)
           })
           .catch((failure) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
           })
           .finally(() => {
-            if (!cancelled) setRepoLoading(false)
+            if (!cancelled) setStateLoading(false)
           })
         return () => {
           cancelled = true
         }
-      }, [repository, workspaceRoot, reloadToken])
+      }, [repository, workspaceRoot, stateToken])
+
+      // The selected repository's history, read apart from the state so a
+      // working-tree toggle never re-reads a page of commits.
+      React.useEffect(() => {
+        let cancelled = false
+        if (repository === null) {
+          setCommits([])
+          setLogLoading(false)
+          return undefined
+        }
+        setLogLoading(true)
+        setError(null)
+        callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE })
+          .then((payload) => {
+            if (!cancelled) setCommits(Array.isArray(payload.commits) ? payload.commits : [])
+          })
+          .catch((failure) => {
+            if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
+          })
+          .finally(() => {
+            if (!cancelled) setLogLoading(false)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [repository, workspaceRoot, logToken])
 
       // A selection belongs to the repository it was made in.
       React.useEffect(() => {
@@ -1295,6 +1743,7 @@ window.__ModuleLoader__.load({
         setSelectedFile(null)
         setCommitFiles([])
         setFilesError(null)
+        setSelectedPaths(new Set())
       }, [repository?.path, workspaceRoot])
 
       // A commit's changed paths are read only once that commit is selected.
@@ -1336,8 +1785,16 @@ window.__ModuleLoader__.load({
       }, [notice])
 
       // A selected file's diff is read on demand; a commit file reads that
-      // commit's own version of the file.
-      const activeFile = selectedFile
+      // commit's own version of the file. A working-tree selection resolves
+      // against the current state, so a path staged after it was picked still
+      // diffs against the side it now belongs to; a commit selection is left
+      // alone because a same-named working-tree row is a different entry.
+      const activeFile = React.useMemo(() => {
+        if (selectedFile === null) return null
+        if (selectedCommit !== null) return selectedFile
+        const fresh = (state?.files ?? []).find((entry) => entry.path === selectedFile.path)
+        return fresh ?? selectedFile
+      }, [selectedFile, selectedCommit, state])
       const activeCommit = selectedCommit
       React.useEffect(() => {
         let cancelled = false
@@ -1345,7 +1802,7 @@ window.__ModuleLoader__.load({
           setDiff(null)
           return undefined
         }
-        callHost('diff', { workspaceRoot, path: repository.path, file: activeFile.path, staged: activeFile.staged === true, commit: activeCommit?.hash })
+        callHost('diff', { workspaceRoot, path: repository.path, file: activeFile.path, staged: activeFile.staged === true, commit: activeCommit?.hash, wholeFile: wholeFileDiff === true })
           .then((payload) => {
             if (!cancelled) setDiff(payload.diff ?? '')
           })
@@ -1355,38 +1812,106 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [activeFile, activeCommit, repository, workspaceRoot])
+      }, [activeFile, activeCommit, repository, workspaceRoot, wholeFileDiff])
 
       /**
-       * Run one mutating operation, then reload.
+       * Run one mutating operation, then reload only what it could have changed.
+       *
+       * The scope keeps the reload proportional to the operation: staging a path
+       * re-reads the working tree alone, while a commit also re-reads history. A
+       * workspace rediscovery never follows an ordinary mutation, which is what
+       * used to make a checkbox click walk every repository again.
        *
        * @param {string} op - operation name.
        * @param {object} args - operation arguments.
        * @param {string|undefined} success - notice shown on success.
+       * @param {'state'|'log'|'full'} [scope] - what to re-read; `full` re-reads working tree and history.
        * @returns {Promise<object|null>} the payload, or null on failure.
        */
       const mutate = React.useCallback(
-        async (op, args, success) => {
+        async (op, args, success, scope = 'full') => {
           if (repository === null) return null
           setBusy(true)
           setError(null)
           try {
             const payload = await callHost(op, { workspaceRoot, path: repository.path, ...args })
-            await refresh()
+            if (scope === 'state') refreshState()
+            else if (scope === 'log') refreshLog()
+            else {
+              refreshState()
+              refreshLog()
+            }
             if (success !== undefined) setNotice(success)
             return payload
           } catch (failure) {
             setError(failure instanceof Error ? failure.message : String(failure))
+            // An optimistic working-tree patch must not survive a refused
+            // operation, so a state-scoped mutation re-reads even on failure.
+            if (scope === 'state') refreshState()
             return null
           } finally {
             setBusy(false)
           }
         },
-        [repository, workspaceRoot, refresh],
+        [repository, workspaceRoot, refreshState, refreshLog],
       )
 
       const closeMenu = React.useCallback(() => setMenu(null), [])
-      const files = state?.files ?? []
+
+      /** The working-tree files as the Host last reported them. */
+      const files = state?.files ?? NO_FILES
+
+      /**
+       * The selected paths that still exist in the working tree.
+       *
+       * A path can outlive the row that selected it — a commit empties the list
+       * while the selection record remains — so the effective selection is
+       * intersected with the current rows instead of read off the raw set.
+       */
+      const pickedPaths = React.useMemo(() => files.filter((file) => selectedPaths.has(file.path)).map((file) => file.path), [files, selectedPaths])
+
+      /**
+       * Add or remove one working-tree path from the selection.
+       *
+       * Selecting is local: the stage and unstage controls are what talk to the
+       * Host, so ticking a file costs no round trip at all.
+       *
+       * @param {object} file - the row that was toggled.
+       * @returns {undefined} nothing.
+       */
+      function togglePicked(file) {
+        setSelectedPaths((value) => {
+          const next = new Set(value)
+          if (next.has(file.path)) next.delete(file.path)
+          else next.add(file.path)
+          return next
+        })
+      }
+
+      /**
+       * Select every working-tree path, or clear the selection.
+       *
+       * @param {boolean} next - whether every path should be selected.
+       * @returns {undefined} nothing.
+       */
+      function selectEverything(next) {
+        setSelectedPaths(next ? new Set(files.map((file) => file.path)) : new Set())
+      }
+
+      /**
+       * Stage or unstage the selected paths, then drop the selection.
+       *
+       * @param {boolean} staged - whether to stage rather than unstage.
+       * @returns {undefined} nothing.
+       */
+      function setSelectedStaged(staged) {
+        if (pickedPaths.length === 0) return
+        const paths = [...pickedPaths]
+        mutate(staged ? 'stage' : 'unstage', { paths }, staged ? t('notice.stagedSelected') : t('notice.unstagedSelected'), 'state').then(
+          () => setSelectedPaths(new Set()),
+        )
+      }
+
       const branches = state?.branches ?? []
       const remotes = state?.remotes ?? []
       const currentBranch = state?.branch ?? null
@@ -1424,7 +1949,7 @@ window.__ModuleLoader__.load({
           setNotice(fill(t('notice.committed'), { short }))
           return
         }
-        const pushed = await mutate('push', { remote: state?.remoteNames?.[0] }, undefined)
+        const pushed = await mutate('push', { remote: state?.remoteNames?.[0] }, undefined, 'state')
         setNotice(pushed === null ? fill(t('notice.committedPushFailed'), { short }) : fill(t('notice.committedPushed'), { short }))
       }
 
@@ -1555,7 +2080,7 @@ window.__ModuleLoader__.load({
               h(
                 'select',
                 { className: 'git-panel-select', value: workspaceRoot ?? '', title: workspaceRoot ?? '', onChange: (event) => setWorkspaceOverride(event.target.value) },
-                roots.map((entry) => h('option', { key: entry.path, value: entry.path }, entry.path)),
+                roots.map((entry) => h('option', { key: entry.path, value: entry.path, title: entry.path }, entry.title)),
               ),
             ),
             currentRepositories.length === 0
@@ -1584,6 +2109,28 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { className: 'git-panel-chip', title: t('aheadBehind.title') }, `${UP}${state.ahead} ${DOWN}${state.behind}`),
             h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: refresh, title: t('refresh') }, busy ? t('working') : t('refresh')),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'git-panel-btn',
+                disabled: busy || repository === null || (state?.remoteNames?.length ?? 0) === 0,
+                onClick: () => mutate('fetch', {}, t('notice.fetched'), 'state'),
+                title: t('fetch'),
+              },
+              t('fetch'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'git-panel-btn',
+                disabled: busy || repository === null || state === null || state.upstream === null,
+                onClick: () => mutate('pull', {}, t('notice.pulled')),
+                title: t('pull'),
+              },
+              t('pull'),
+            ),
             h(
               'button',
               {
@@ -1666,11 +2213,27 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'git-panel-pane-head' },
+                      h('input', {
+                        type: 'checkbox',
+                        className: 'git-panel-check',
+                        checked: files.length > 0 && pickedPaths.length === files.length,
+                        disabled: busy || files.length === 0,
+                        title: t('selectAll'),
+                        'aria-label': t('selectAll'),
+                        // A DOM property, not an attribute: React cannot set it
+                        // from props, and a partial selection must render the
+                        // dash rather than a checked box.
+                        ref: (element) => {
+                          if (element === null || element === undefined) return
+                          element.indeterminate = pickedPaths.length > 0 && pickedPaths.length < files.length
+                        },
+                        onChange: () => selectEverything(pickedPaths.length !== files.length),
+                      }),
                       h('span', { className: 'git-panel-pane-title' }, t('changes')),
                       h('span', { className: 'git-panel-count' }, String(files.length)),
                       h('span', { className: 'git-panel-spacer' }),
-                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || files.length === 0, onClick: () => mutate('stage', {}, t('notice.stagedAll')) }, t('stageAll')),
-                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || files.every((file) => file.staged !== true), onClick: () => mutate('unstage', {}, t('notice.unstagedAll')) }, t('unstageAll')),
+                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || pickedPaths.length === 0, title: t('stageSelected.hint'), onClick: () => setSelectedStaged(true) }, t('stageSelected')),
+                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || pickedPaths.length === 0, title: t('unstageSelected.hint'), onClick: () => setSelectedStaged(false) }, t('unstageSelected')),
                     ),
                     h(
                       'div',
@@ -1683,7 +2246,8 @@ window.__ModuleLoader__.load({
                           file,
                           busy,
                           selected: selectedCommit === null && selectedFile?.path === file.path,
-                          onToggle: (entry) => mutate(entry.staged === true ? 'unstage' : 'stage', { paths: [entry.path] }, undefined),
+                          picked: selectedPaths.has(file.path),
+                          onToggle: (entry) => togglePicked(entry),
                           onSelect: (entry) => {
                             setSelectedCommit(null)
                             setSelectedFile(entry)
@@ -1700,7 +2264,7 @@ window.__ModuleLoader__.load({
                               y: event.clientY,
                               title: entry.path,
                               items: [
-                                entry.staged === true ? { label: t('unstageAll'), run: () => mutate('unstage', { paths: [entry.path] }) } : { label: t('stageAll'), run: () => mutate('stage', { paths: [entry.path] }) },
+                                entry.staged === true ? { label: t('menu.unstage'), run: () => mutate('unstage', { paths: [entry.path] }, undefined, 'state') } : { label: t('menu.stage'), run: () => mutate('stage', { paths: [entry.path] }, undefined, 'state') },
                                 { separator: true },
                                 { label: t('menu.showDiff'), run: () => { setSelectedCommit(null); openDiff(entry) } },
                                 { label: t('copyHash'), run: () => copyText(entry.path) },
@@ -1839,7 +2403,7 @@ window.__ModuleLoader__.load({
               ),
         menu === null ? null : h(ContextMenu, { menu, onClose: closeMenu }),
         dialog === null ? null : h(Dialog, { dialog, onClose: () => setDialog(null), t }),
-        diffOpen && selectedFile !== null && repository !== null ? h(DiffModal, { file: selectedFile, commit: selectedCommit, text: diff, stale: staleHost, onClose: () => setDiffOpen(false), t }) : null,
+        diffOpen && activeFile !== null && repository !== null ? h(DiffModal, { file: activeFile, commit: selectedCommit, text: diff, stale: staleHost, whole: wholeFileDiff, onClose: () => setDiffOpen(false), t }) : null,
       )
     }
 

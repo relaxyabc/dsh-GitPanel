@@ -9,10 +9,11 @@
  * shipped API bridge; it is never a bare unauthenticated webserver route.
  *
  * Reads are `repos`, `state`, `log`, `commitFiles`, and `diff`; writes are
- * `stage`, `unstage`, `commit`, `push`, `checkout`, `deleteBranch`, `reset`,
- * `cherryPick`, `revert`, `amend`, and `submodule`. The one setting, the
- * repository discovery depth, is a plain plugin Config field the Plugins page
- * edits through the Host settings service.
+ * `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`, `checkout`,
+ * `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`, and `submodule`.
+ * The plugin Config holds the repository discovery depth and the whole-file diff
+ * switch; both are plain fields the Plugins page edits through the Host settings
+ * service.
  *
  * @module GitPanel
  */
@@ -34,6 +35,16 @@ const GIT_TIMEOUT_MS = 60_000
 
 /** Cap on captured stdout/stderr of one `git` invocation, in bytes. */
 const GIT_MAX_BUFFER = 32 * 1024 * 1024
+
+/**
+ * Context lines requested when the whole-file diff view is on.
+ *
+ * The unified diff keeps this many unchanged lines around every change, which
+ * past any real file length means the whole file is present and the client can
+ * align the two versions. It is a display switch, not a new limit: the captured
+ * output still rides the same capture cap.
+ */
+const WHOLE_FILE_CONTEXT = 1_000_000
 
 /** Directory names never descended into during repository discovery. */
 const SKIPPED_DIRECTORIES = new Set([
@@ -107,6 +118,18 @@ function configValue(value) {
  */
 function effectiveDepth() {
   return clampDepth(configValue(settings.config?.discoveryDepth))
+}
+
+/**
+ * Whether the whole-file diff view is in force right now.
+ *
+ * Like the depth, the field is volatile: the Loader updates an edited value in
+ * place, so it is read per call rather than captured when the plugin applies.
+ *
+ * @returns {boolean} whether diffs should carry the whole file.
+ */
+function effectiveWholeFileDiff() {
+  return configValue(settings.config?.wholeFileDiff) === true
 }
 
 /** Most repositories one discovery call reports. */
@@ -713,12 +736,14 @@ function commitNumstatArgs(parent, commit) {
  * @param {string|null} parent - the commit's first parent, or null for a root commit.
  * @param {string} commit - the commit to inspect.
  * @param {string} file - the repository-relative path.
+ * @param {boolean} whole - whether to widen the context to the whole file.
  * @returns {string[]} the argv after the program name.
  */
-function commitDiffArgs(parent, commit, file) {
+function commitDiffArgs(parent, commit, file, whole) {
+  const context = whole ? [`--unified=${WHOLE_FILE_CONTEXT}`] : []
   return parent === null
-    ? ['show', '--no-color', '--no-ext-diff', '--no-renames', '--format=', commit, '--', file]
-    : ['diff', '--no-color', '--no-ext-diff', '--no-renames', parent, commit, '--', file]
+    ? ['show', '--no-color', '--no-ext-diff', '--no-renames', '--format=', ...context, commit, '--', file]
+    : ['diff', '--no-color', '--no-ext-diff', '--no-renames', ...context, parent, commit, '--', file]
 }
 
 /**
@@ -791,6 +816,44 @@ async function writeCommit(repositoryPath, args) {
 async function writePush(repositoryPath, args) {
   const argv = ['push']
   if (args.setUpstream === true) argv.push('--set-upstream')
+  if (typeof args.remote === 'string' && args.remote !== '') argv.push(args.remote)
+  if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
+  const output = await gitOrThrow(repositoryPath, argv)
+  return { summary: output.trim() }
+}
+
+/**
+ * Download new objects and remote-tracking refs without touching the worktree.
+ *
+ * With no remote named, `git fetch` uses the current branch's configured
+ * remote, which is the ref the panel's ahead/behind chip already reports.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<object>} git's own progress report.
+ */
+async function writeFetch(repositoryPath, args) {
+  const argv = ['fetch']
+  if (args.prune === true) argv.push('--prune')
+  if (typeof args.remote === 'string' && args.remote !== '') argv.push(args.remote)
+  if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
+  const output = await gitOrThrow(repositoryPath, argv)
+  return { summary: output.trim() }
+}
+
+/**
+ * Integrate the current branch's upstream into the working tree.
+ *
+ * The panel only offers this when the branch has an upstream, so the no-remote
+ * branch of `git pull` is never reached from the UI.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<object>} git's own report.
+ */
+async function writePull(repositoryPath, args) {
+  const argv = ['pull']
+  if (args.ffOnly === true) argv.push('--ff-only')
   if (typeof args.remote === 'string' && args.remote !== '') argv.push(args.remote)
   if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
   const output = await gitOrThrow(repositoryPath, argv)
@@ -918,21 +981,27 @@ async function writeSubmodule(repositoryPath, args) {
  * the file (against that commit's first parent), the index against `HEAD`, or
  * the working tree — with an untracked path diffed against the empty file.
  *
+ * `args.wholeFile` widens the unified context so the whole file is present on
+ * both sides; the client then renders two full copies with the changes in place
+ * instead of only the changed regions.
+ *
  * @param {string} repositoryPath - absolute repository path.
  * @param {object} args - request arguments.
  * @returns {Promise<object>} the diff text.
  */
 async function readDiff(repositoryPath, args) {
   const file = requireText(args.file)
+  const whole = args.wholeFile === true
   if (typeof args.commit === 'string' && args.commit !== '') {
     const commit = args.commit
     const parent = await firstParentOf(repositoryPath, commit)
-    const committed = await runGit(repositoryPath, commitDiffArgs(parent, commit, file))
+    const committed = await runGit(repositoryPath, commitDiffArgs(parent, commit, file, whole))
     if (!committed.ok) throw new Error(committed.stderr.trim() || `git exited with ${committed.code}`)
     return { diff: committed.stdout, untracked: false, commit, parent }
   }
   const argv = ['diff']
   if (args.staged === true) argv.push('--cached')
+  if (whole) argv.push(`--unified=${WHOLE_FILE_CONTEXT}`)
   argv.push('--', file)
   const tracked = await runGit(repositoryPath, argv)
   if (tracked.ok && tracked.stdout.trim() !== '') return { diff: tracked.stdout, untracked: false }
@@ -941,7 +1010,10 @@ async function readDiff(repositoryPath, args) {
     if (!tracked.ok) throw new Error(tracked.stderr.trim() || `git diff exited with ${tracked.code}`)
     return { diff: '', untracked: false }
   }
-  const untrackedDiff = await runGit(repositoryPath, ['diff', '--no-index', '--no-color', '--', process.platform === 'win32' ? 'NUL' : '/dev/null', file])
+  const untrackedArgs = ['diff', '--no-index', '--no-color']
+  if (whole) untrackedArgs.push(`--unified=${WHOLE_FILE_CONTEXT}`)
+  untrackedArgs.push('--', process.platform === 'win32' ? 'NUL' : '/dev/null', file)
+  const untrackedDiff = await runGit(repositoryPath, untrackedArgs)
   return { diff: untrackedDiff.stdout, untracked: true }
 }
 
@@ -958,7 +1030,7 @@ const READ_OPERATIONS = {
     const info = await stat(root).catch(() => null)
     if (info === null || !info.isDirectory()) throw new Error(`the workspace root does not exist: ${root}`)
     const repositories = await discoverRepositories(root)
-    return { workspaceRoot: root.replace(/\\/g, '/'), discoveryDepth: effectiveDepth(), repositories }
+    return { workspaceRoot: root.replace(/\\/g, '/'), discoveryDepth: effectiveDepth(), wholeFileDiff: effectiveWholeFileDiff(), repositories }
   },
 
   /**
@@ -1037,6 +1109,20 @@ const WRITE_OPERATIONS = {
    * @returns {Promise<object>} git's report.
    */
   push: (args) => writePush(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Download objects from a remote without merging.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} git's report.
+   */
+  fetch: (args) => writeFetch(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Integrate a remote branch into the working tree.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} git's report.
+   */
+  pull: (args) => writePull(resolveInside(args.workspaceRoot, args.path), args),
   /**
    * Switch to or create a branch.
    *
@@ -1242,6 +1328,18 @@ function resolveNode(value, node) {
     if (meta.max !== undefined && parsed > meta.max) throw schemaError(`must be ${meta.max} or less`)
     return parsed
   }
+  if (node.type === 'boolean') {
+    const meta = node.meta ?? {}
+    if (value === undefined || value === null) {
+      if (meta.default === undefined) throw schemaError('a boolean is required')
+      return meta.default
+    }
+    if (typeof value === 'boolean') return value
+    const text = String(value).trim().toLowerCase()
+    if (text === 'true' || text === '1') return true
+    if (text === 'false' || text === '0') return false
+    throw schemaError('a boolean is required')
+  }
   return value
 }
 
@@ -1260,8 +1358,22 @@ const DISCOVERY_DEPTH_NODE = makeSchemaNode({
   },
 })
 
+/** The `wholeFileDiff` field: editable live, applied to every diff request the client makes. */
+const WHOLE_FILE_DIFF_NODE = makeSchemaNode({
+  type: 'boolean',
+  meta: {
+    default: false,
+    volatile: true,
+    description: {
+      '': 'Off: only the changed hunks. On: both sides show the whole file, with every change listed beside the line numbers to jump to.',
+      zh: '关闭:只显示改动片段。开启:左右两栏显示整个文件,并在行号旁列出每处改动以供跳转。',
+    },
+  },
+})
+
 /**
- * The plugin configuration schema: one live-edited discovery depth.
+ * The plugin configuration schema: the live discovery depth and whole-file diff
+ * switch.
  *
  * Hand-built to stay dependency-free; the shape mirrors schemastery's own wire
  * protocol so the Host treats it as a native graph.
@@ -1269,14 +1381,14 @@ const DISCOVERY_DEPTH_NODE = makeSchemaNode({
 export const Config = makeSchemaNode({
   type: 'object',
   meta: {},
-  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE },
+  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE, wholeFileDiff: WHOLE_FILE_DIFF_NODE },
 })
 
 /**
  * Register the operation route and apply the plugin configuration.
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
- * @param {{ discoveryDepth?: number }} [config] - the validated plugin configuration.
+ * @param {{ discoveryDepth?: number, wholeFileDiff?: boolean }} [config] - the validated plugin configuration.
  */
 export function apply(ctx, config) {
   settings.config = config ?? null

@@ -6,7 +6,7 @@
  * exercises every operation through the registered Fetch route.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply, Config } from '../index.js'
@@ -206,6 +206,13 @@ try {
   live.value = 6
   const widened = (await call('repos', { workspaceRoot: root })).body.data ?? {}
   check(widened.discoveryDepth === 6 && (widened.repositories ?? []).some((entry) => entry.relative === 'nested/deep/very/repo4'), 'a live settings edit applies without re-applying the plugin', { depth: widened.discoveryDepth, repos: (widened.repositories ?? []).map((entry) => entry.relative) })
+  const liveSwitch = { value: true }
+  apply(ctx, { wholeFileDiff: { get: () => liveSwitch.value } })
+  const switchOn = (await call('repos', { workspaceRoot: root })).body.data ?? {}
+  check(switchOn.wholeFileDiff === true, 'the repos answer carries the whole-file switch in force', switchOn.wholeFileDiff)
+  liveSwitch.value = false
+  const switchOff = (await call('repos', { workspaceRoot: root })).body.data ?? {}
+  check(switchOff.wholeFileDiff === false, 'a live switch edit applies without re-applying the plugin', switchOff.wholeFileDiff)
   apply(ctx)
 
   // ---- configuration ---------------------------------------------------------------
@@ -219,6 +226,14 @@ try {
   const under = Config['~standard'].validate({ discoveryDepth: 0 })
   check(Array.isArray(under.issues) && under.issues.length > 0, 'a depth under one is refused', under)
   check(typeof Config.toJSON === 'function' && Config.type === 'object' && Config.dict?.discoveryDepth?.type === 'number', 'the schema projects as a native graph')
+  check(Config.dict?.wholeFileDiff?.type === 'boolean', 'the schema carries the whole-file switch', Config.dict)
+  check(filled.value?.wholeFileDiff === false, 'the whole-file switch defaults to off', filled)
+  const wholeOn = Config['~standard'].validate({ wholeFileDiff: true })
+  check(wholeOn.value?.wholeFileDiff === true, 'the whole-file switch accepts a boolean', wholeOn)
+  const wholeString = Config['~standard'].validate({ wholeFileDiff: 'true' })
+  check(wholeString.value?.wholeFileDiff === true, 'a boolean string is accepted', wholeString)
+  const wholeBogus = Config['~standard'].validate({ wholeFileDiff: 'maybe' })
+  check(Array.isArray(wholeBogus.issues) && wholeBogus.issues.length > 0, 'a non-boolean switch is refused', wholeBogus)
 
   // ---- state -------------------------------------------------------------------
   console.log('\nstate')
@@ -386,6 +401,27 @@ try {
   check(afterPush.remotes.some((entry) => entry.name === 'origin/main'), 'the remote-tracking branch is listed', afterPush.remotes.map((entry) => entry.name))
   check(afterPush.ahead === 0 && afterPush.behind === 0, 'ahead/behind are in sync', { ahead: afterPush.ahead, behind: afterPush.behind })
 
+  // ---- fetch and pull ----------------------------------------------------------
+  console.log('\nfetch and pull')
+  const peer = join(root, 'alpha-peer')
+  git(root, ['clone', '--quiet', bare.replace(/\\/g, '/'), peer.replace(/\\/g, '/')])
+  writeFileSync(join(peer, 'peer.txt'), 'from the peer\n')
+  git(peer, ['add', '-A'])
+  git(peer, ['commit', '-m', 'peer: add a file'])
+  git(peer, ['push', '--quiet', 'origin', 'main'])
+  const beforeFetch = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
+  check(beforeFetch.behind === 0, 'the local branch is in sync before fetching', beforeFetch.behind)
+  const fetched = await call('fetch', { workspaceRoot: root, path: 'alpha' })
+  check(fetched.body.ok === true, 'fetch succeeds', fetched.body)
+  const afterFetch = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
+  check(afterFetch.behind === 1, 'fetch advances the behind count', afterFetch.behind)
+  check(afterFetch.files.length === 0, 'fetch leaves the working tree alone', afterFetch.files)
+  const pulled = await call('pull', { workspaceRoot: root, path: 'alpha' })
+  check(pulled.body.ok === true, 'pull succeeds', pulled.body)
+  const afterPull = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
+  check(afterPull.behind === 0 && afterPull.ahead === 0, 'pull integrates the upstream', { ahead: afterPull.ahead, behind: afterPull.behind })
+  check(readFileSync(join(alpha, 'peer.txt'), 'utf8') === 'from the peer\n', 'pull brings the new file into the working tree')
+
   writeFileSync(join(alpha, 'extra.txt'), 'x\n')
   await call('stage', { workspaceRoot: root, path: 'alpha' })
   await call('commit', { workspaceRoot: root, path: 'alpha', message: 'ahead commit' })
@@ -409,12 +445,40 @@ try {
   const afterInit = (await call('state', { workspaceRoot: root, path: 'beta-clone' })).body.data
   check(afterInit.submodules[0]?.state === 'initialized', 'the submodule is initialized afterwards', afterInit.submodules)
 
+  // ---- whole-file diff ---------------------------------------------------------
+  console.log('\nwhole-file diff')
+  const diffRepo = join(root, 'diffrepo')
+  mkdirSync(diffRepo, { recursive: true })
+  git(diffRepo, ['init', '-b', 'main'])
+  const longLines = Array.from({ length: 40 }, (_, index) => `line-${index + 1}`)
+  writeFileSync(join(diffRepo, 'long.txt'), `${longLines.join('\n')}\n`)
+  git(diffRepo, ['add', '-A'])
+  git(diffRepo, ['commit', '-m', 'seed a long file'])
+  const editedLines = [...longLines]
+  editedLines[19] = 'line-20-changed'
+  writeFileSync(join(diffRepo, 'long.txt'), `${editedLines.join('\n')}\n`)
+
+  const compactDiff = (await call('diff', { workspaceRoot: root, path: 'diffrepo', file: 'long.txt' })).body.data?.diff ?? ''
+  check(compactDiff.includes('-line-20') && compactDiff.includes('+line-20-changed'), 'the compact diff carries the change', compactDiff.slice(0, 200))
+  check(!compactDiff.includes(' line-1\n'), 'the compact diff omits distant context', compactDiff.slice(0, 200))
+  const wholeDiff = (await call('diff', { workspaceRoot: root, path: 'diffrepo', file: 'long.txt', wholeFile: true })).body.data?.diff ?? ''
+  check(wholeDiff.includes('-line-20') && wholeDiff.includes('+line-20-changed'), 'the whole-file diff carries the change', wholeDiff.slice(0, 200))
+  check(wholeDiff.includes(' line-1\n') && wholeDiff.includes(' line-40'), 'the whole-file diff carries the entire file')
+
+  const seedHash = (await call('log', { workspaceRoot: root, path: 'diffrepo', limit: 1 })).body.data.commits[0].hash
+  const wholeCommitDiff = (await call('diff', { workspaceRoot: root, path: 'diffrepo', file: 'long.txt', commit: seedHash, wholeFile: true })).body.data?.diff ?? ''
+  check(wholeCommitDiff.includes('+line-1\n') && wholeCommitDiff.includes('+line-40'), 'a whole-file commit diff carries the entire file', wholeCommitDiff.slice(0, 200))
+
   // ---- failures ----------------------------------------------------------------
   console.log('\nfailures')
   const escape = await call('state', { workspaceRoot: alpha, path: '../libsource' })
   check(escape.body.ok === false, 'a path outside the workspace root is refused', escape.body)
   const unknown = await call('nope', {})
   check(unknown.body.ok === false, 'an unknown operation is refused', unknown.body)
+  const badFetch = await call('fetch', { workspaceRoot: alpha, path: '../libsource' })
+  check(badFetch.body.ok === false, 'fetch refuses a path outside the workspace root', badFetch.body)
+  const badPull = await call('pull', { workspaceRoot: alpha, path: '../libsource' })
+  check(badPull.body.ok === false, 'pull refuses a path outside the workspace root', badPull.body)
   const missingRoot = await call('state', { path: 'alpha' })
   check(missingRoot.body.ok === false, 'a missing workspaceRoot is refused', missingRoot.body)
   const normalised = await call('state', { workspaceRoot: root, path: 'libsource/../alpha' })

@@ -92,7 +92,9 @@ const { apply } = await import('../index.js')
 
 /** The registered Fetch route. */
 let route = null
-apply({
+
+/** The fake Host context, kept so the whole-file switch can be turned on later. */
+const hostContext = {
   effect: (callback) => callback(),
   connection: {
     fetch: {
@@ -102,7 +104,8 @@ apply({
       },
     },
   },
-})
+}
+apply(hostContext)
 
 /**
  * Answer one operation by running the real Host half.
@@ -169,6 +172,10 @@ const React = {
       const cleanup = effect()
       hook.cleanup = typeof cleanup === 'function' ? cleanup : undefined
     }
+  },
+  useRef(initial) {
+    const hook = slot(() => ({ value: { current: initial } }))
+    return hook.value
   },
 }
 
@@ -429,6 +436,22 @@ const modalTree = await render(async (view) => {
   await view.redraw()
 })
 
+// The third artefact is the same diff modal with the whole-file switch on, so
+// the change rail beside the line numbers is visible in both palettes.
+apply(hostContext, { wholeFileDiff: true })
+const wholeModalTree = await render(async (view) => {
+  const row = findNode(
+    view.tree,
+    (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onDoubleClick === 'function' && textOf(element).includes('index.ts'),
+  )
+  if (row === undefined) {
+    console.error('[preview] no changed-path row was found; the whole-file artefact is empty')
+    return
+  }
+  row.props.onDoubleClick()
+  await view.redraw()
+})
+
 /** The stylesheet the panel ships, extracted from its own style element. */
 let stylesheet = ''
 const stack = [tree]
@@ -529,7 +552,7 @@ writeFileSync(
   .frame-modal { position: relative; transform: translateZ(0); }
   ${stylesheet}
 </style></head>
-<body>${pane('panel — light', tree, 'light')}${pane('panel — dark', tree, 'dark')}${pane('diff modal — light', modalTree, 'light', 'frame-modal')}${pane('diff modal — dark', modalTree, 'dark', 'frame-modal')}</body></html>
+<body>${pane('panel — light', tree, 'light')}${pane('panel — dark', tree, 'dark')}${pane('diff modal — light', modalTree, 'light', 'frame-modal')}${pane('diff modal — dark', modalTree, 'dark', 'frame-modal')}${pane('whole-file modal — light', wholeModalTree, 'light', 'frame-modal')}${pane('whole-file modal — dark', wholeModalTree, 'dark', 'frame-modal')}</body></html>
 `,
 )
 
