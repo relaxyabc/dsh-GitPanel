@@ -1,0 +1,1131 @@
+/**
+ * Render test for the Git manager browser half.
+ *
+ * Loads `client.js` through the real `window.__ModuleLoader__` contract with a
+ * minimal React stand-in that keeps per-component hook tables, runs effects, and
+ * re-renders when a setter fires. It drives the full-page panel through its
+ * real states — repository discovery, branch list, history, the selected
+ * commit's details and a file diff — and inspects the captured registrations.
+ * It catches structural errors, not visual ones.
+ */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const here = dirname(fileURLToPath(import.meta.url))
+
+let failures = 0
+let checks = 0
+
+/**
+ * Assert one condition.
+ * @param {boolean} condition - condition to assert.
+ * @param {string} label - what was asserted.
+ * @param {unknown} detail - extra detail on failure.
+ */
+function check(condition, label, detail) {
+  checks += 1
+  if (condition) {
+    console.log(`  ok   ${label}`)
+    return
+  }
+  failures += 1
+  console.log(`  FAIL ${label}${detail === undefined ? '' : `\n       ${typeof detail === 'string' ? detail : JSON.stringify(detail)?.slice(0, 400)}`}`)
+}
+
+let currentOwner = null
+let rootInstance = null
+
+/**
+ * Compare dependency arrays.
+ * @param {readonly unknown[]|undefined} left - previous.
+ * @param {readonly unknown[]|undefined} right - next.
+ * @returns {boolean} whether they match.
+ */
+function sameDeps(left, right) {
+  if (left === undefined || right === undefined) return false
+  return left.length === right.length && left.every((value, index) => Object.is(value, right[index]))
+}
+
+/**
+ * Take the hook slot at the cursor.
+ * @param {Function} initial - slot factory.
+ * @returns {object} the slot.
+ */
+function slot(initial) {
+  if (currentOwner === null) throw new Error('a hook ran while no component was rendering')
+  const index = currentOwner.cursor
+  currentOwner.cursor += 1
+  if (currentOwner.hooks.length <= index) currentOwner.hooks.push(initial())
+  return currentOwner.hooks[index]
+}
+
+/** The React stand-in. */
+const React = {
+  Fragment: Symbol('Fragment'),
+  createElement(type, props, ...children) {
+    const flat = children.flat()
+    return { type, props: { ...(props ?? {}), children: flat }, children: flat }
+  },
+  useState(initial) {
+    const hook = slot(() => ({ value: typeof initial === 'function' ? initial() : initial }))
+    const root = rootInstance
+    return [hook.value, (next) => {
+      const value = typeof next === 'function' ? next(hook.value) : next
+      if (Object.is(value, hook.value)) return
+      hook.value = value
+      if (root !== null) root.dirty = true
+    }]
+  },
+  useMemo(factory, deps) {
+    const hook = slot(() => ({ deps: undefined, result: undefined }))
+    if (!sameDeps(hook.deps, deps)) {
+      hook.result = factory()
+      hook.deps = deps
+    }
+    return hook.result
+  },
+  useCallback(callback, deps) {
+    const hook = slot(() => ({ deps: undefined, result: undefined }))
+    if (!sameDeps(hook.deps, deps)) {
+      hook.result = callback
+      hook.deps = deps
+    }
+    return hook.result
+  },
+  useEffect(effect, deps) {
+    const hook = slot(() => ({ deps: undefined, cleanup: undefined, effect: undefined }))
+    if (sameDeps(hook.deps, deps)) return
+    hook.deps = deps
+    hook.effect = () => {
+      if (typeof hook.cleanup === 'function') hook.cleanup()
+      const cleanup = effect()
+      hook.cleanup = typeof cleanup === 'function' ? cleanup : undefined
+    }
+  },
+}
+
+// ---- module loading ---------------------------------------------------------
+let registration = null
+globalThis.window = {
+  __DSH_GIT_TRACE__: process.env.DSH_SMOKE_TRACE === '1',
+  __ModuleLoader__: { load: (entry) => { registration = entry } },
+  innerWidth: 1440,
+  innerHeight: 900,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  setTimeout: (callback) => {
+    timers.push(callback)
+    return 0
+  },
+  clearTimeout: () => {},
+}
+/**
+ * The `@deepseek-ai/dsh-client-ui-primitives` stand-in: the shared settings form
+ * and the staged form model the Plugins page card is built from. The model keeps
+ * the framework's contract — stage on edit, one revision-fenced write on save —
+ * because that staging is what the card's assertions are about.
+ */
+const primitivesStub = {
+  SettingsFormModel: class {
+    constructor(scope, specs) {
+      this.scope = scope
+      this.specs = specs
+      this.staged = new Map()
+    }
+    bind(project) {
+      return { getSnapshot: () => project() }
+    }
+    shell() {
+      const snapshot = this.scope.getSnapshot()
+      return { available: snapshot.status === 'ready', writable: snapshot.writable === true, dirty: this.staged.size > 0, invalid: false, saving: false, failed: false }
+    }
+    field(name) {
+      const spec = this.specs.find((entry) => entry.field === name)
+      const snapshot = this.scope.getSnapshot()
+      const staged = this.staged.get(name)
+      return {
+        text: staged === undefined ? spec.format(snapshot.value?.[name]) : staged,
+        overridden: staged !== undefined ? staged !== '' : Object.hasOwn(snapshot.user ?? {}, name),
+        invalid: staged !== undefined && spec.parse(staged) === undefined,
+      }
+    }
+    actions() {
+      return {
+        edit: (field, text) => this.staged.set(field, text),
+        resetField: (field) => this.staged.set(field, ''),
+        save: () => this.save(),
+        discard: () => this.staged.clear(),
+      }
+    }
+    async save() {
+      for (const spec of this.specs) {
+        const staged = this.staged.get(spec.field)
+        if (staged === undefined) continue
+        const write = spec.parse(staged)
+        if (write === undefined) continue
+        const op = write.kind === 'clear' ? { op: 'unset', path: [spec.field] } : { op: 'set', path: [spec.field], value: write.value }
+        await this.scope.mutate([op], this.scope.getSnapshot().revision)
+      }
+      this.staged.clear()
+    }
+    dispose() {}
+  },
+  settingsNumberField: (field) => ({
+    field,
+    format: (value) => (value === undefined || value === null ? '' : String(value)),
+    parse: (text) => (text.trim() === '' ? { kind: 'clear' } : Number.isFinite(Number(text)) ? { kind: 'set', value: Number(text) } : undefined),
+  }),
+  SettingsForm: (props) =>
+    React.createElement(
+      'div',
+      { className: 'stub-settings-form', 'data-available': String(props.state.available) },
+      props.children,
+      React.createElement('button', { type: 'button', onClick: props.onSave }, props.labels.save),
+      React.createElement('button', { type: 'button', onClick: props.onDiscard }, props.labels.readOnly),
+    ),
+  SettingsValueField: (props) =>
+    React.createElement(
+      'div',
+      { className: 'stub-settings-field' },
+      React.createElement('label', { htmlFor: props.id }, props.label),
+      React.createElement('input', { id: props.id, value: props.text, disabled: props.disabled, onChange: (event) => props.onEdit(event.target.value) }),
+      props.invalid ? React.createElement('span', null, props.invalidLabel) : React.createElement('span', null, props.hint),
+    ),
+}
+
+globalThis.require = (name) => {
+  if (name === 'react') return React
+  if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
+  throw new Error(`unexpected require(${name})`)
+}
+
+/** Timer callbacks the panel scheduled. */
+let timers = []
+
+/**
+ * Let every pending microtask and scheduled timer run.
+ * @returns {Promise<void>} nothing once quiet.
+ */
+async function drain() {
+  for (let round = 0; round < 60; round += 1) {
+    await Promise.resolve()
+    while (pending.size > 0) await Promise.all([...pending])
+    const queued = timers
+    timers = []
+    for (const callback of queued) callback()
+    if (queued.length === 0 && pending.size === 0 && round > 3) return
+  }
+}
+
+/**
+ * Let a freshly fetched value reach the tree, then redraw once.
+ *
+ * @param {object} view - the current render.
+ * @returns {Promise<object>} the refreshed render.
+ */
+async function settle(view) {
+  await drain()
+  return view.refresh()
+}
+
+/** Host calls in flight, so the settle loop can await them. */
+const pending = new Set()
+
+/** Every request the panel made. */
+const requests = []
+
+/** The fake workspace the panel browses. */
+const WORKSPACE = '/home/me/project'
+
+/**
+ * Whether a repository path lies inside one workspace root, the way the Host's
+ * fence decides it.
+ *
+ * @param {string} root - the workspace root.
+ * @param {string} path - the repository path.
+ * @returns {boolean} whether the path is inside the root.
+ */
+function isInside(root, path) {
+  const foldedRoot = root.replace(/[\\/]+$/, '')
+  return path === foldedRoot || path.startsWith(`${foldedRoot}/`) || path.startsWith(`${foldedRoot}\\`)
+}
+
+globalThis.fetch = async (url, init) => {
+  const body = JSON.parse(init.body)
+  requests.push(body)
+  // Discovery really is the slow call — it walks the tree and spawns git per
+  // repository — while a refused path is answered at once. Holding the answer
+  // back by a few microtasks reproduces that ordering, which is what makes a
+  // stale pairing visible as a flash instead of a silent no-op.
+  if (body.op === 'repos') for (let tick = 0; tick < 5; tick += 1) await Promise.resolve()
+  if (staleHost && NEWER_OPERATIONS.includes(body.op)) {
+    return { status: 200, json: async () => ({ ok: false, error: `unknown operation "${body.op}"` }) }
+  }
+  // The real Host refuses a repository path that its workspace root does not
+  // contain, so the harness must refuse it too — that refusal flashing during a
+  // workspace switch is exactly what a stale pairing produces.
+  if (typeof body.args?.path === 'string' && typeof body.args?.workspaceRoot === 'string' && !isInside(body.args.workspaceRoot, body.args.path)) {
+    return { status: 200, json: async () => ({ ok: false, error: 'the path is outside the workspace root' }) }
+  }
+  const answer = answerFor(body)
+  return { status: 200, json: async () => ({ ok: true, data: answer }) }
+}
+
+/**
+ * Wrap a Host call so the harness can await every call the panel triggered.
+ *
+ * @param {RequestInfo} url - request URL.
+ * @param {RequestInit} init - request inputs.
+ * @returns {Promise<object>} the response.
+ */
+function trackedFetch(url, init) {
+  const answer = globalThis.fetch(url, init)
+  const tracked = answer.finally(() => pending.delete(tracked))
+  pending.add(tracked)
+  return tracked
+}
+
+/** The depth the fake Host currently has stored. */
+let serverDepth = 3
+
+/** Whether the fake Host answers like a build that predates the newest operations. */
+let staleHost = false
+
+/** The operations a Host build without the newest additions does not know. */
+const NEWER_OPERATIONS = ['commitFiles', 'discoveryDepth']
+
+/**
+ * Answer one Host operation.
+ * @param {object} request - the posted envelope.
+ * @returns {object} the payload.
+ */
+function answerFor(request) {
+  if (request.op === 'repos') {
+    // Discovery answers for the root it was asked about, so every repository a
+    // later call names really lies inside the workspace in force.
+    const root = typeof request.args?.workspaceRoot === 'string' && request.args.workspaceRoot !== '' ? request.args.workspaceRoot : WORKSPACE
+    return {
+      workspaceRoot: root,
+      // A Host build that predates the newest operations reports no depth.
+      ...(staleHost ? {} : { discoveryDepth: serverDepth }),
+      repositories: [
+        { path: `${root}/app`, name: 'app', relative: 'app', isSubmodule: false },
+        { path: `${root}/libsource`, name: 'libsource', relative: 'libsource', isSubmodule: false },
+        { path: `${root}/app/vendor/lib`, name: 'lib', relative: 'app/vendor/lib', isSubmodule: true },
+      ],
+    }
+  }
+  if (request.op === 'state') {
+    return {
+      root: `${WORKSPACE}/app`,
+      name: 'app',
+      branch: 'main',
+      detached: false,
+      upstream: 'origin/main',
+      ahead: 2,
+      behind: 1,
+      remoteNames: ['origin'],
+      branches: [
+        { name: 'main', current: true, upstream: 'origin/main', track: '[ahead 2]', subject: 'initial', timestamp: 1, remote: false },
+        { name: 'fix/rename-docs', current: false, upstream: null, track: null, subject: 'rename', timestamp: 1, remote: false },
+        { name: 'topic', current: false, upstream: null, track: null, subject: 'work', timestamp: 1, remote: false },
+      ],
+      remotes: [{ name: 'origin/main', current: false, upstream: null, track: null, subject: 'initial', timestamp: 1, remote: true }],
+      submodules: [{ path: 'vendor/lib', head: 'abcdef0123456789', describe: '', state: 'uninitialized' }],
+      files: [
+        { path: 'src/index.ts', from: null, status: 'M', added: 4, removed: 2, binary: false, staged: false, untracked: false },
+        { path: 'docs/old.md', from: 'docs/new.md', status: 'R', added: 0, removed: 0, binary: false, staged: true, untracked: false },
+        { path: 'fresh.txt', from: null, status: '?', added: 0, removed: 0, binary: false, staged: false, untracked: true },
+      ],
+    }
+  }
+  if (request.op === 'log') {
+    return {
+      commits: [
+        {
+          hash: 'a'.repeat(40),
+          short: 'aaaaaaaa',
+          author: 'Ada Lovelace',
+          email: 'ada@example.com',
+          timestamp: 1700000000,
+          parents: ['b'.repeat(40)],
+          refs: ['HEAD -> main'],
+          subject: 'feat: greet the world',
+          body: 'A longer explanation\nof the change.',
+          // A Host build that predates `commitFiles` reports the file stats here.
+          files: [
+            { added: 3, removed: 1, path: 'src/index.ts' },
+            { added: null, removed: null, path: 'assets/logo.png' },
+          ],
+        },
+        { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '' },
+      ],
+    }
+  }
+  if (request.op === 'commitFiles') {
+    return {
+      commit: request.args?.commit,
+      parent: request.args?.commit === 'a'.repeat(40) ? 'b'.repeat(40) : null,
+      files: request.args?.commit === 'a'.repeat(40)
+        ? [
+            { added: 3, removed: 1, path: 'src/index.ts', binary: false },
+            { added: null, removed: null, path: 'assets/logo.png', binary: true },
+          ]
+        : [{ added: 1, removed: 0, path: 'README.md', binary: false }],
+    }
+  }
+  if (request.op === 'discoveryDepth') {
+    serverDepth = Number(request.args?.value)
+    return { discoveryDepth: serverDepth, persisted: true }
+  }
+  if (request.op === 'diff') {
+    // An older Host ignores the commit argument and answers with the worktree
+    // diff, which is empty for a file that only the commit touched.
+    if (staleHost && typeof request.args?.commit === 'string') return { diff: '', untracked: false }
+    if (request.args?.file === 'assets/logo.png') return { diff: 'diff --git a/assets/logo.png b/assets/logo.png\nBinary files a/assets/logo.png and b/assets/logo.png differ\n', untracked: false }
+    return { diff: 'diff --git a/src/index.ts b/src/index.ts\nindex 111..222 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,2 +1,3 @@\n-old line\n+new line\n+another\n', untracked: false }
+  }
+  return {}
+}
+
+const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+new Function('window', 'require', 'fetch', source)(globalThis.window, globalThis.require, trackedFetch)
+
+check(registration !== null, 'the bundle registers a module factory')
+check(registration?.id === 'sidebar-git', 'the factory id is the package name', registration?.id)
+
+const clientModule = registration.factory(globalThis.require)
+check(clientModule?.inject?.includes('slots'), 'it injects the slot registry')
+check(clientModule?.inject?.includes('sidebarRightTabs'), 'it injects the tab-type registry')
+check(clientModule?.inject?.includes('layout'), 'it injects the layout service')
+check(clientModule?.inject?.includes('configForms'), 'it injects the shared configuration forms')
+check(typeof clientModule?.apply === 'function', 'the module exports apply')
+
+/** Everything the fake client context captured. */
+const captured = { main: [], panels: [], types: [], bodies: [], titles: [], bundleConfigs: [] }
+
+/** Main-panel ids the fake layout service was asked to select. */
+const selectedPanels = []
+
+/** While true the fake layout service refuses the transition, as it does before the key is committed. */
+let refusePanels = false
+
+/** While true the fake tab close refuses, standing in for a record with no committed occurrence. */
+let failClose = false
+
+/** The settings document the fake `configForms` service serves. */
+const settingsDocument = { status: 'ready', value: { discoveryDepth: 3 }, base: {}, user: {}, writable: true, revision: 1 }
+
+/** Every write the settings card staged, in order. */
+const settingsWrites = []
+
+/** The `configForms` service stand-in: one namespace, served while its status says so. */
+const configFormsStub = {
+  get: (ns) => ({
+    getSnapshot: () => settingsDocument,
+    subscribe: () => () => {},
+    mutate: async (ops, revision) => {
+      settingsWrites.push({ ns, ops, revision })
+      for (const op of ops) {
+        if (op.op === 'set') {
+          settingsDocument.value = { ...settingsDocument.value, [op.path[0]]: op.value }
+          settingsDocument.user = { ...settingsDocument.user, [op.path[0]]: op.value }
+        } else {
+          const next = { ...settingsDocument.value }
+          delete next[op.path[0]]
+          settingsDocument.value = next
+        }
+      }
+      settingsDocument.revision = (settingsDocument.revision ?? 0) + 1
+      return true
+    },
+  }),
+  whileServed: (namespaces, register) => {
+    if (namespaces.includes(settingsDocument.ns ?? 'sidebar-git')) return register()
+    return () => {}
+  },
+}
+
+/** The locale service stand-in: captures registered dictionaries, reads one current language. */
+const localeState = { current: 'en', registered: [], ns: null }
+const localeStub = {
+  register: (ns, dicts) => {
+    localeState.registered.push({ ns, dicts })
+    localeState.ns = { ns, dicts }
+    return () => {}
+  },
+  bind: () => (key) => localeState.ns?.dicts?.[localeState.current]?.[key] ?? key,
+}
+
+/** Tab ids the fake sidebar controller was asked to close. */
+const closedTabs = []
+
+clientModule.apply({
+  effect: (callback) => {
+    const disposer = callback()
+    return typeof disposer === 'function' ? disposer : () => {}
+  },
+  locale: localeStub,
+  layout: {
+    selectPanel: (panelId) => {
+      if (refusePanels) throw new Error('the git panel is not committed yet')
+      selectedPanels.push(panelId)
+    },
+  },
+  sidebarRightTabs: { register: (definition) => { captured.types.push(definition); return () => {} } },
+  sidebarRight: {
+    isExpanded: () => true,
+    toggleExpanded: () => {},
+    close: (tabId) => { closedTabs.push(tabId) },
+  },
+  configForms: configFormsStub,
+  slots: {
+    inject: (name, callback) => {
+      const disposer = callback()
+      return typeof disposer === 'function' ? disposer : () => {}
+    },
+    register: (options, component) => {
+      if (options.name === 'main') captured.main.push({ options, component })
+      if (options.name === 'sidebar.panellist') captured.panels.push({ options, component })
+      if (options.name === 'sidebar.right.pane.tab') captured.bodies.push({ options, component })
+      if (options.name === 'sidebar.right.pane.tab.title') captured.titles.push({ options, component })
+      if (options.name === 'plugins.bundle.config') captured.bundleConfigs.push({ options, component })
+      return () => {}
+    },
+  },
+})
+
+console.log('\nregistration')
+check(captured.main.length === 1, 'a main panel is registered', captured.main.length)
+check(captured.main[0]?.options?.key === 'git', 'the main panel key is git', captured.main[0]?.options?.key)
+check(captured.panels.length === 1, 'a sidebar panel entry is registered', captured.panels.length)
+check(captured.panels[0]?.options?.id === captured.main[0]?.options?.key, 'the sidebar entry id matches the main panel key')
+check(captured.panels[0]?.options?.label?.() === 'Git', 'the sidebar entry is labelled Git', captured.panels[0]?.options?.label?.())
+check(typeof captured.panels[0]?.component === 'function', 'the sidebar entry renders an icon')
+check(captured.types.length === 1 && captured.types[0]?.kind === 'git', 'the right-Sidebar tab type is registered')
+check(captured.bodies.length === 1, 'the right-Sidebar launcher body is registered', captured.bodies.length)
+check(captured.titles.length === 1, 'the right-Sidebar chip title is registered', captured.titles.length)
+
+console.log('\ni18n')
+check(localeState.registered.length === 1, 'the dictionaries are registered once', localeState.registered.length)
+check(localeState.registered[0]?.ns === 'sidebarGit', 'the locale namespace is sidebarGit', localeState.registered[0]?.ns)
+check(localeState.ns?.dicts?.en?.launcherHint === 'Branches, commits, changes and remotes', 'the English guide copy is registered')
+check(localeState.ns?.dicts?.zh?.launcherHint === '分支、提交、改动与远程', 'the Chinese guide copy is registered')
+check(localeState.ns?.dicts?.en?.['settings.save'] === 'Save' && localeState.ns?.dicts?.zh?.['settings.save'] === '保存', 'the settings form copy is registered in both languages')
+check(localeState.ns?.dicts?.en?.['diff.before'] === 'Before' && localeState.ns?.dicts?.zh?.['diff.before'] === '修改前', 'the side-by-side headings are registered in both languages')
+check(
+  Object.keys(localeState.ns?.dicts?.en ?? {}).every((key) => Object.hasOwn(localeState.ns?.dicts?.zh ?? {}, key)) &&
+    Object.keys(localeState.ns?.dicts?.zh ?? {}).every((key) => Object.hasOwn(localeState.ns?.dicts?.en ?? {}, key)),
+  'both dictionaries carry the same keys',
+  Object.keys(localeState.ns?.dicts?.en ?? {}).length,
+)
+check(captured.types[0]?.guide?.[0]?.description() === 'Branches, commits, changes and remotes', 'the guide description reads English by default', captured.types[0]?.guide?.[0]?.description())
+localeState.current = 'zh'
+check(captured.types[0]?.guide?.[0]?.description() === '分支、提交、改动与远程', 'the guide description follows the locale', captured.types[0]?.guide?.[0]?.description())
+check(captured.types[0]?.guide?.[0]?.title() === 'Git', 'the guide title follows the locale')
+check(captured.panels[0]?.options?.label?.() === 'Git', 'the panel label follows the locale', captured.panels[0]?.options?.label?.())
+localeState.current = 'en'
+
+const GitPanel = captured.main[0]?.component
+
+// The launcher registers through a wrapper; it is a different component identity.
+const Launcher = captured.bodies[0]?.component
+
+// ---- rendering --------------------------------------------------------------
+/**
+ * Expand function components with per-position hook caching.
+ * @param {object} node - element.
+ * @param {object} owner - enclosing hook table.
+ * @returns {object} the expanded node.
+ */
+function expand(node, owner) {
+  if (node === null || node === undefined || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map((child) => expand(child, { children: new Map(), cursor: 0 }))
+  if (typeof node.type === 'function') {
+    const outer = currentOwner
+    let instance = owner.children.get(node.type)
+    if (instance === undefined) {
+      instance = { hooks: [], cursor: 0 }
+      owner.children.set(node.type, instance)
+    }
+    instance.cursor = 0
+    currentOwner = instance
+    const rendered = node.type(node.props)
+    currentOwner = outer
+    return expand(rendered, { children: new Map(), cursor: 0 })
+  }
+  if (typeof node.type === 'symbol') return (node.children ?? []).map((child) => expand(child, { children: new Map(), cursor: 0 }))
+  return { ...node, children: (node.children ?? []).flat().map((child) => expand(child, { children: new Map(), cursor: 0 })) }
+}
+
+/**
+ * Collect rendered text.
+ * @param {object} node - element tree.
+ * @param {Array<string>} bucket - accumulator.
+ * @returns {Array<string>} the text.
+ */
+function collectText(node, bucket = []) {
+  if (typeof node === 'string' || typeof node === 'number') {
+    bucket.push(String(node))
+    return bucket
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) collectText(child, bucket)
+    return bucket
+  }
+  if (node !== null && typeof node === 'object') for (const child of node.children ?? []) collectText(child, bucket)
+  return bucket
+}
+
+/**
+ * Find the first element satisfying a predicate.
+ * @param {object} node - element tree.
+ * @param {Function} predicate - matcher.
+ * @returns {object|undefined} the element.
+ */
+function find(node, predicate) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child, predicate)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (node.props !== undefined && predicate(node)) return node
+  for (const child of node.children ?? []) {
+    const hit = find(child, predicate)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
+/**
+ * Find every element satisfying a predicate.
+ * @param {object} node - element tree.
+ * @param {Function} predicate - matcher.
+ * @param {Array<object>} bucket - accumulator.
+ * @returns {Array<object>} the matches.
+ */
+function findAll(node, predicate, bucket = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return bucket
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, predicate, bucket)
+    return bucket
+  }
+  if (node.props !== undefined && predicate(node)) bucket.push(node)
+  for (const child of node.children ?? []) findAll(child, predicate, bucket)
+  return bucket
+}
+
+/**
+ * Render a component with the executing-hook harness.
+ * @param {Function} component - the component.
+ * @param {object} props - its props.
+ * @returns {Promise<object>} the settled render.
+ */
+async function render(component, props) {
+  const instance = { hooks: [], cursor: 0, dirty: true, tree: null, expanded: null, children: new Map() }
+  const outerRoot = rootInstance
+  rootInstance = instance
+  const outerOwner = currentOwner
+  const pass = async () => {
+    instance.dirty = false
+    instance.cursor = 0
+    currentOwner = instance
+    try {
+      instance.tree = component(props)
+    } finally {
+      currentOwner = outerOwner
+    }
+    // Expand with the persistent child cache, so nested components' hooks live
+    // here and their effects run in this pass.
+    instance.expanded = expand(instance.tree, instance)
+    for (const hooks of [instance, ...instance.children.values()]) {
+      for (const hook of hooks.hooks) {
+        if (hook.effect === undefined) continue
+        const effect = hook.effect
+        hook.effect = undefined
+        effect()
+      }
+    }
+    await drain()
+  }
+  for (let round = 0; round < 40; round += 1) {
+    await pass()
+    if (!instance.dirty) break
+  }
+  rootInstance = outerRoot
+  const draw = () => {
+    const next = instance.expanded ?? expand(instance.tree, instance)
+    return { tree: next, text: () => collectText(next) }
+  }
+  const finished = () => {
+    rootInstance = outerRoot
+    return draw()
+  }
+  /**
+   * Re-render after a captured handler changed state.
+   * @returns {Promise<object>} the new render.
+   */
+  const refresh = async () => {
+    rootInstance = instance
+    instance.dirty = true
+    for (let round = 0; round < 40; round += 1) {
+      if (!instance.dirty) break
+      await pass()
+    }
+    rootInstance = outerRoot
+    return { ...draw(), refresh }
+  }
+  return { ...finished(), refresh }
+}
+
+console.log('\nfull page with no workspace')
+requests.length = 0
+const empty = await render(GitPanel, { useWorkspaces: () => [], useSessions: () => undefined })
+check(empty.text().some((text) => text.includes('No workspace')), 'the empty state explains itself', empty.text().slice(0, 12))
+check(empty.text().includes('Push'), 'the toolbar still renders', empty.text().slice(0, 12))
+
+console.log('\nrender: localized state')
+localeState.current = 'zh'
+const zhPanel = await render(GitPanel, { useWorkspaces: () => [], useSessions: () => undefined })
+check(zhPanel.text().some((text) => text.includes('尚未打开任何工作区')), 'the empty state renders in Chinese', zhPanel.text().slice(0, 12))
+check(zhPanel.text().includes('推送'), 'the toolbar renders Chinese copy', zhPanel.text().slice(0, 14))
+localeState.current = 'en'
+
+console.log('\nfull page over a workspace')
+requests.length = 0
+/** The sessions snapshot the framework would deliver for the current Session. */
+const SESSIONS = { ids: ['s1'], byId: { s1: { cwd: WORKSPACE, retainedBy: { mainView: 1 } } } }
+let view = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const text = view.text()
+check(requests.some((entry) => entry.op === 'repos'), 'the panel discovers repositories', requests.map((entry) => entry.op))
+check(requests.some((entry) => entry.op === 'state'), 'the panel reads the selected repository')
+check(requests.some((entry) => entry.op === 'log'), 'the panel reads the history')
+check(text.includes('Branches'), 'the branch column renders', text.slice(0, 20))
+check(text.includes('Commits'), 'the commit column renders')
+check(text.includes('Working tree'), 'the changes pane renders')
+check(text.includes('main'), 'the current branch renders')
+check(text.includes('fix/rename-docs'), 'the local branches render')
+check(text.includes('feat: greet the world'), 'the commit subjects render')
+check(text.includes('index.ts'), 'the changed paths render')
+check(text.includes('Commit & push'), 'the commit controls render')
+check(text.includes('vendor/lib'), 'the submodule is listed')
+check(text.filter((entry) => entry === 'app').length >= 1, 'the repository name renders in the toolbar')
+
+console.log('\ntoolbar')
+const toolbarSelects = findAll(view.tree, (element) => element.type === 'select' && typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-select'))
+check(toolbarSelects.length >= 2, 'the workspace and repository fields always render', toolbarSelects.length)
+const workspaceSelect = toolbarSelects.find((element) => collectText(element).includes(WORKSPACE))
+check(workspaceSelect !== undefined, 'the workspace field shows the workspace directory', collectText(toolbarSelects[0]))
+const repositorySelect = toolbarSelects.find((element) => collectText(element).includes('app'))
+check(repositorySelect !== undefined, 'the repository field shows the repository', collectText(toolbarSelects[1] ?? {}))
+const branchChip = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-branch-chip'))
+check(branchChip !== undefined && collectText(branchChip).includes('main'), 'the branch chip names the current branch')
+const styleNode = find(view.tree, (element) => element.type === 'style')
+const css = Array.isArray(styleNode?.children) ? styleNode.children.flat().join('') : ''
+const primaryRule = /\.dsh-git-btn-primary\{[^}]*\}/.exec(css)?.[0] ?? ''
+check(primaryRule.includes('color-mix') && !primaryRule.includes('#fff'), 'the primary button stays readable in the dark palette', primaryRule)
+const tagRule = /\.dsh-git-tag\{[^}]*\}/.exec(css)?.[0] ?? ''
+check(tagRule.includes('color-mix') && !tagRule.includes('#fff'), 'the HEAD tag stays readable in the dark palette', tagRule)
+const modalRule = /\.dsh-git-modal\{position:fixed[^}]*\}/.exec(css)?.[0] ?? ''
+check(modalRule.includes('position:fixed'), 'the diff modal renders centered over the panel', modalRule.slice(0, 48))
+check(!view.text().includes('Back to chat'), 'the back-to-chat button is gone from the toolbar')
+
+console.log('\nPlugins page settings card')
+check(captured.bundleConfigs.length === 1, 'one bundle configuration entry is registered', captured.bundleConfigs.length)
+check(captured.bundleConfigs[0]?.options?.key === 'sidebar-git', 'the entry is keyed by this bundle package name', captured.bundleConfigs[0]?.options?.key)
+check(captured.bundleConfigs[0]?.options?.name === 'plugins.bundle.config', 'the entry lives on the bundle page, not in the official group', captured.bundleConfigs[0]?.options?.name)
+const cardComponent = captured.bundleConfigs[0]?.component
+const cardFace = captured.bundleConfigs[0]?.options?.inject?.() ?? {}
+// The framework binds each injected hook store as a selector hook of the same
+// name, prefixed with `use`; mirror that binding here.
+const cardStore = cardFace.hooks?.gitSettings
+const cardProps = { ...cardFace, useGitSettings: (selector) => selector(cardStore.getSnapshot()), t: localeStub.bind() }
+check(typeof cardStore?.getSnapshot === 'function', 'the card injects one form snapshot store', Object.keys(cardFace.hooks ?? {}))
+check(typeof cardProps.useGitSettings === 'function' && typeof cardProps.useGitSettings((snapshot) => snapshot.writable) === 'boolean', 'the injected hook answers a selector', cardProps.useGitSettings((snapshot) => snapshot))
+check(typeof cardFace.edit === 'function' && typeof cardFace.save === 'function' && typeof cardFace.resetField === 'function', 'the card receives the form actions', Object.keys(cardFace))
+localeState.current = 'en'
+const card = await render(cardComponent, { ...cardProps, view: 'page' })
+const depthInput = find(card.tree, (element) => element.props?.id === 'sidebar-git-discovery-depth')
+check(depthInput !== undefined, 'the card renders the depth field', collectText(card.tree).slice(0, 6))
+check(depthInput?.props?.value === '3', 'the field shows the configured value', depthInput?.props?.value)
+check(collectText(card.tree).some((entry) => entry.includes('scanned below the workspace root')), 'the field explains itself', collectText(card.tree).slice(0, 8))
+depthInput?.props?.onChange?.({ target: { value: '6' } })
+const staged = await settle(card)
+const saveButton = find(staged.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))
+check(saveButton !== undefined, 'the card offers a save', collectText(staged.tree).slice(0, 8))
+settingsWrites.length = 0
+saveButton?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ns === 'sidebar-git' && settingsWrites[0].ops[0]?.op === 'set' && settingsWrites[0].ops[0]?.path?.[0] === 'discoveryDepth' && settingsWrites[0].ops[0]?.value === 6,
+  'saving writes the staged depth to this plugin namespace',
+  settingsWrites,
+)
+check(settingsWrites[0]?.revision === 1, 'the write is fenced by the revision it was staged from', settingsWrites[0]?.revision)
+check(
+  findAll(staged.tree, (element) => element.type === 'input' && element.props?.id === 'sidebar-git-discovery-depth').length === 1,
+  'the panel itself no longer carries a depth control',
+  findAll(view.tree, (element) => element.type === 'select').map((element) => collectText(element)),
+)
+const invalidCard = await render(cardComponent, { ...cardProps, view: 'page' })
+const invalidInput = find(invalidCard.tree, (element) => element.props?.id === 'sidebar-git-discovery-depth')
+invalidInput?.props?.onChange?.({ target: { value: 'deep' } })
+const invalidSettled = await settle(invalidCard)
+settingsWrites.length = 0
+find(invalidSettled.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(settingsWrites.length === 0, 'an unparsable draft blocks the save instead of writing garbage', settingsWrites)
+check(collectText(invalidSettled.tree).some((entry) => entry.includes('whole number between 1 and 8')), 'the field says what it accepts', collectText(invalidSettled.tree).slice(-4))
+
+console.log('\nworkspace from the current session')
+requests.length = 0
+const sessionView = await render(GitPanel, {
+  useWorkspaces: () => [],
+  useSessions: (selector) => selector({ ids: ['s9'], byId: { s9: { cwd: `${WORKSPACE}/app`, retainedBy: { mainView: 1 } } } }),
+})
+check(
+  requests.some((entry) => entry.op === 'repos' && entry.args?.workspaceRoot === `${WORKSPACE}/app`),
+  'the panel opens the current session directory as the workspace',
+  requests.map((entry) => entry.args?.workspaceRoot),
+)
+check(sessionView.text().includes('app'), 'the session directory renders as the workspace', sessionView.text().slice(0, 20))
+
+requests.length = 0
+const listedSessionView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: `${WORKSPACE}/other`, title: 'other' }, { path: `${WORKSPACE}/app`, title: 'app' }],
+  useSessions: (selector) => selector({ ids: ['s9'], byId: { s9: { cwd: `${WORKSPACE}/app`, retainedBy: { mainView: 1 } } } }),
+})
+check(
+  requests.some((entry) => entry.op === 'repos' && entry.args?.workspaceRoot === `${WORKSPACE}/app`),
+  'the current session workspace outranks the first workspace in the list',
+  requests.map((entry) => entry.args?.workspaceRoot),
+)
+const listedSelect = find(listedSessionView.tree, (element) => element.type === 'select' && collectText(element).some((entry) => entry.includes('other')))
+check(listedSelect?.props?.value === `${WORKSPACE}/app`, 'the workspace field shows the session workspace', listedSelect?.props?.value)
+
+console.log('\nworkspace follows the conversation')
+requests.length = 0
+const sessionState = { current: { ids: ['s1'], byId: { s1: { cwd: `${WORKSPACE}/alpha`, retainedBy: { mainView: 1 } } } } }
+const workspaceList = { current: [{ path: `${WORKSPACE}/alpha`, title: 'alpha' }, { path: `${WORKSPACE}/beta`, title: 'beta' }] }
+const followView = await render(GitPanel, {
+  useWorkspaces: () => workspaceList.current,
+  useSessions: (selector) => selector(sessionState.current),
+})
+const betaSelect = find(followView.tree, (element) => element.type === 'select' && collectText(element).some((entry) => entry.includes('beta')))
+const selectDump = findAll(followView.tree, (element) => element.type === 'select').map((element) => `${String(element.props?.value)}=>${JSON.stringify(collectText(element))}`)
+check(betaSelect !== undefined, 'both workspaces are offered in the toolbar', selectDump.join(' | '))
+betaSelect?.props?.onChange?.({ target: { value: `${WORKSPACE}/beta` } })
+const pickedView = await settle(followView)
+const pickedSelect = find(pickedView.tree, (element) => element.type === 'select' && typeof element.props?.value === 'string')
+check(pickedSelect?.props?.value === `${WORKSPACE}/beta`, 'a manual pick switches the workspace within the session', pickedSelect?.props?.value)
+sessionState.current = { ids: ['s2'], byId: { s2: { cwd: `${WORKSPACE}/alpha`, retainedBy: { mainView: 1 } } } }
+const followBack = await settle(pickedView)
+check(
+  requests.some((entry) => entry.op === 'repos' && entry.args?.workspaceRoot === `${WORKSPACE}/alpha`),
+  'switching conversations reselects that conversation workspace',
+  requests.map((entry) => entry.args?.workspaceRoot),
+)
+const restoredSelect = find(followBack.tree, (element) => element.type === 'select' && typeof element.props?.value === 'string')
+check(restoredSelect?.props?.value === `${WORKSPACE}/alpha`, 'the workspace select follows the conversation', restoredSelect?.props?.value)
+check(
+  requests
+    .filter((entry) => typeof entry.args?.path === 'string')
+    .every((entry) => isInside(entry.args.workspaceRoot, entry.args.path)),
+  'switching workspaces never asks for another workspace repository',
+  requests.filter((entry) => typeof entry.args?.path === 'string').map((entry) => `${entry.op} ${entry.args.workspaceRoot} + ${entry.args.path}`),
+)
+check(
+  !followBack.text().some((entry) => entry.includes('outside the workspace root')),
+  'no refusal flashes while switching workspaces',
+  followBack.text().filter((entry) => entry.includes('workspace')),
+)
+
+console.log('\nworkspace from a session subdirectory')
+requests.length = 0
+const nestedView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: `${WORKSPACE}/proj`, title: 'proj' }],
+  useSessions: (selector) => selector({ ids: ['s7'], byId: { s7: { cwd: `${WORKSPACE}/proj/src/lib`, retainedBy: { mainView: 1 } } } }),
+})
+check(
+  requests.some((entry) => entry.op === 'repos' && entry.args?.workspaceRoot === `${WORKSPACE}/proj`),
+  'a session opened in a workspace subdirectory selects that workspace',
+  requests.map((entry) => entry.args?.workspaceRoot),
+)
+
+console.log('\nworking-tree diff')
+requests.length = 0
+const changeFileRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onClick === 'function' && collectText(element).includes('fresh.txt'),
+)
+check(changeFileRow !== undefined, 'a changed path row is clickable')
+changeFileRow?.props?.onDoubleClick?.()
+view = await settle(view)
+check(requests.some((entry) => entry.op === 'diff'), 'double-clicking a changed path reads its diff', requests.map((entry) => entry.op))
+const diffModal = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal'))
+check(diffModal !== undefined, 'the diff modal opens over the panel')
+const diffText = collectText(diffModal)
+check(diffText.includes('new line') && diffText.includes('old line'), 'the diff modal shows both sides of the change', diffText.slice(-20))
+check(diffText.includes('working tree'), 'the modal names the working tree as the source', diffText.slice(0, 8))
+const sideBySide = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-sbs'))
+check(sideBySide !== undefined, 'the diff renders as two aligned columns')
+const removedCells = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-sbs-del'))
+const addedCells = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-sbs-add'))
+check(removedCells.some((cell) => collectText(cell).includes('old line')), 'the old line sits in the left column', removedCells.map((cell) => collectText(cell)))
+check(addedCells.some((cell) => collectText(cell).includes('new line')), 'the new line sits in the right column', addedCells.map((cell) => collectText(cell)))
+const lineNumbers = findAll(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-sbs-no')).map((cell) => collectText(cell).join(''))
+check(lineNumbers.join(',') === '1,1,,2', 'both columns carry line numbers, and a replaced pair shares the row', lineNumbers)
+// One file at a time: picking another row swaps the modal content in place.
+const indexRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onClick === 'function' && collectText(element).includes('index.ts'),
+)
+indexRow?.props?.onClick?.()
+view = await settle(view)
+const swappedTitle = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal-title'))
+check(swappedTitle !== undefined && collectText(swappedTitle).includes('index.ts'), 'the open modal follows the new selection', collectText(swappedTitle))
+const modalClose = find(view.tree, (element) => element.type === 'button' && element.props?.title === 'Close')
+check(modalClose !== undefined, 'the diff modal offers a close control')
+modalClose?.props?.onClick?.()
+view = await settle(view)
+check(find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal')) === undefined, 'closing the modal returns to the panel')
+
+
+console.log('\nHost half older than this panel')
+staleHost = true
+requests.length = 0
+const staleView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+check(
+  staleView.text().some((entry) => entry.includes('newer than the running Host half')),
+  'a Host that reports no depth is named as an older build before anything fails',
+  staleView.text().filter((entry) => entry.length > 60),
+)
+const staleCommitRow = find(
+  staleView.tree,
+  (element) => typeof element.props?.onClick === 'function' && collectText(element).includes('feat: greet the world'),
+)
+staleCommitRow?.props?.onClick?.()
+const staleSettled = await settle(staleView)
+const staleText = staleSettled.text()
+check(staleText.some((entry) => entry.includes('newer than the running Host half')), 'a Host that lacks the new operations is named as such', staleText.filter((entry) => entry.length > 60))
+check(staleText.some((entry) => entry.includes('src/index.ts')), 'the file list falls back to the history page of an older Host', staleText.filter((entry) => entry.includes('index.ts')))
+check(!staleText.some((entry) => entry.includes('unknown operation')), 'the raw Host refusal is not shown verbatim', staleText.filter((entry) => entry.includes('unknown')))
+const staleAfter = staleSettled
+const staleFileRow = findAll(
+  staleAfter.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onDoubleClick === 'function',
+).find((row) => collectText(row).includes('src/index.ts'))
+check(staleFileRow !== undefined, 'a commit file row is reachable on an older Host')
+staleFileRow?.props?.onDoubleClick?.()
+const staleModal = await settle(staleAfter)
+const staleModalBody = find(staleModal.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal'))
+check(
+  collectText(staleModalBody).some((entry) => entry.includes('newer than the running Host half')),
+  'an empty commit diff on an older Host explains itself instead of reading as no change',
+  collectText(staleModalBody).slice(-6),
+)
+staleHost = false
+const recovered = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+check(!recovered.text().some((entry) => entry.includes('newer than the running Host half')), 'a current Host shows no warning')
+
+console.log('\nbranch filter')
+const filterInput = find(view.tree, (element) => element.props?.placeholder === 'Filter branches')
+check(filterInput !== undefined, 'the branch filter input renders')
+filterInput?.props?.onChange?.({ target: { value: 'rename' } })
+view = await settle(view)
+const filtered = view.text()
+check(filtered.includes('fix/rename-docs'), 'the filter keeps a matching branch', filtered.slice(-14))
+check(!filtered.includes('topic'), 'the filter drops a non-matching branch', filtered.filter((entry) => entry === 'topic'))
+
+console.log('\ncommit selection')
+requests.length = 0
+const commitRow = find(view.tree, (element) => typeof element.props?.onClick === 'function' && collectText(element).includes('feat: greet the world'))
+check(commitRow !== undefined, 'a commit row is clickable')
+commitRow?.props?.onClick?.()
+view = await settle(view)
+const details = view.text()
+check(details.includes('Ada Lovelace'), 'the selected commit author renders', details.slice(-20))
+check(details.some((entry) => entry.includes('ada@example.com')), 'the selected commit e-mail renders', details.slice(-16))
+check(details.some((entry) => entry.includes('2023-11-1')), 'the selected commit date renders', details.slice(-20))
+check(details.includes('aaaaaaaa'), 'the selected commit hash renders')
+check(details.some((entry) => entry.includes('A longer explanation')), 'the commit body renders', details.slice(-14))
+check(
+  requests.some((entry) => entry.op === 'commitFiles' && entry.args?.commit === 'a'.repeat(40)),
+  'selecting a commit reads only that commit file list',
+  requests.map((entry) => entry.op),
+)
+check(details.includes('assets/logo.png'), 'the commit file list renders')
+check(details.includes('Files'), 'the file-list heading renders')
+
+console.log('\ncommit file diff')
+requests.length = 0
+const fileRow = findAll(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onClick === 'function',
+).find((row) => collectText(row).includes('assets/logo.png'))
+check(fileRow !== undefined, 'a commit file row is clickable')
+fileRow?.props?.onDoubleClick?.()
+view = await settle(view)
+check(requests.some((entry) => entry.op === 'diff' && entry.args?.commit === 'a'.repeat(40)), 'a commit file is diffed against its own commit', requests.map((entry) => entry.args?.commit))
+const commitDiffModal = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal'))
+check(commitDiffModal !== undefined, 'the commit diff modal opens over the panel')
+check(collectText(commitDiffModal).includes('commit aaaaaaaa'), 'the modal names the commit the diff belongs to', collectText(commitDiffModal).slice(0, 10))
+check(collectText(commitDiffModal).some((entry) => entry.includes('Binary file')), 'a binary file says so instead of showing an empty diff', collectText(commitDiffModal).slice(-8))
+const commitClose = find(view.tree, (element) => element.type === 'button' && element.props?.title === 'Close')
+check(commitClose !== undefined, 'the commit diff modal offers a close control')
+commitClose?.props?.onClick?.()
+view = await settle(view)
+check(
+  find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-modal')) === undefined,
+  'closing the commit diff modal returns to the panel',
+)
+
+console.log('\nworking-tree diff after a commit selection')
+requests.length = 0
+const treeFileRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onDoubleClick === 'function' && collectText(element).includes('fresh.txt'),
+)
+check(treeFileRow !== undefined, 'a working-tree row is still reachable while a commit is selected')
+treeFileRow?.props?.onDoubleClick?.()
+view = await settle(view)
+const treeDiff = requests.filter((entry) => entry.op === 'diff').pop()
+check(treeDiff !== undefined && treeDiff.args?.commit === undefined, 'a working-tree file is diffed against the tree, not the selected commit', treeDiff?.args)
+const treeModalClose = find(view.tree, (element) => element.type === 'button' && element.props?.title === 'Close')
+treeModalClose?.props?.onClick?.()
+view = await settle(view)
+
+console.log('\ncontext menus')
+view = await settle(view)
+const branchRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fix/rename-docs'),
+)
+check(branchRow !== undefined, 'a branch row carries a context menu')
+branchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+check(view.text().includes('Checkout fix/rename-docs'), 'the branch menu offers a checkout', view.text().slice(-24))
+check(view.text().includes('Delete branch'), 'the branch menu offers a delete')
+
+const commitContextRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('chore: scaffold'),
+)
+check(commitContextRow !== undefined, 'a commit row carries a context menu')
+commitContextRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 60, clientY: 60 })
+view = await settle(view)
+const menuText = view.text()
+check(menuText.some((entry) => entry.includes('Cherry-pick')), 'the commit menu offers a cherry-pick', menuText.slice(-24))
+check(menuText.includes('Reset (hard)'), 'the commit menu offers a hard reset')
+check(menuText.includes('Revert commit'), 'the commit menu offers a revert')
+check(menuText.includes('Amend message'), 'the commit menu offers an amend', menuText.slice(-24))
+
+const changeRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fresh.txt'),
+)
+check(changeRow !== undefined, 'a changed path carries a context menu')
+changeRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+check(view.text().includes('Show the diff'), 'the changed-path menu offers the diff', view.text().slice(-24))
+
+console.log('\nright-Sidebar tab is a door, not a page')
+requests.length = 0
+closedTabs.length = 0
+const tabProps = {
+  sessionId: 's1',
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: () => SESSIONS,
+}
+/**
+ * The tab information the framework hands one body.
+ *
+ * @param {string|undefined} id - the tab record id.
+ * @param {boolean} visible - whether the foreground session shows this tab.
+ * @param {number} revision - navigation revision of the record.
+ * @returns {object} the hook result.
+ */
+const tabInfo = (id, visible, revision) => ({
+  tab: {
+    id,
+    visible,
+    navigation: { revision },
+    actions: {
+      close: () => {
+        if (failClose) throw new Error('the tab has no committed occurrence')
+        closedTabs.push(id)
+      },
+    },
+  },
+})
+
+// The card is what a deployment sees when the tab cannot close itself, so the
+// close is made to fail here; the same card must never read Host data.
+failClose = true
+const idleTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-idle', false, 0) })
+const idleText = idleTab.text()
+check(idleText.includes('Git'), 'the fallback card names the tool', idleText.slice(0, 10))
+check(idleText.some((entry) => entry.includes('full page')), 'the fallback card explains where the tool opens', idleText.filter((entry) => entry.length < 60))
+check(idleText.includes('Open Git panel'), 'the fallback card offers the door', idleText.filter((entry) => entry.length < 40))
+check(!idleText.includes('Commit & push'), 'the tab is not the whole tool')
+check(requests.length === 0, 'the tab reads nothing from the Host', requests.map((entry) => entry.op))
+check(selectedPanels.length === 0, 'a tab nobody navigated to never takes the main area', selectedPanels)
+failClose = false
+
+console.log('\nthe tab closes itself and opens the panel')
+selectedPanels.length = 0
+closedTabs.length = 0
+const openedTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-git', true, 3) })
+check(selectedPanels.includes('git'), 'arriving at the tab selects the main panel', selectedPanels)
+check(closedTabs.includes('tab-git'), 'arriving at the tab closes it, so no Git tab is left behind', closedTabs)
+check(openedTab.text().length === 0, 'a closed tab renders nothing at all', openedTab.text())
+const beforeRestore = selectedPanels.length
+const restoredTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-restored', true, 0) })
+check(selectedPanels.length === beforeRestore, 'a tab restored from a previous session does not steal the main area', selectedPanels)
+check(closedTabs.includes('tab-restored'), 'a restored tab is closed again instead of lingering', closedTabs)
+const hiddenTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-hidden', false, 0) })
+check(selectedPanels.length === beforeRestore, 'a hidden tab never takes the main area', selectedPanels)
+check(closedTabs.includes('tab-hidden'), 'a mounted record is closed even while the column is collapsed', closedTabs)
+void hiddenTab
+void restoredTab
+
+console.log('\na tab that cannot close never replays its navigation')
+failClose = true
+selectedPanels.length = 0
+const stuckFirst = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-stuck', true, 5) })
+check(selectedPanels.length === 1, 'the navigation opens the panel once', selectedPanels)
+check(find(stuckFirst.tree, (element) => element.type === 'button' && collectText(element).includes('Open Git panel')) !== undefined, 'the door stays visible while the tab cannot close', collectText(stuckFirst.tree).filter((entry) => entry.length < 40))
+const stuckAgain = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-stuck', true, 5) })
+check(selectedPanels.length === 1, 'a remount with the same revision does not take the main area again', selectedPanels)
+check(find(stuckAgain.tree, (element) => element.type === 'button' && collectText(element).includes('Open Git panel')) !== undefined, 'the door is still the fallback', collectText(stuckAgain.tree).filter((entry) => entry.length < 40))
+const stuckAgainLater = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-stuck', true, 5) })
+check(selectedPanels.length === 1, 'showing the same record again never steals the conversation back', selectedPanels)
+void stuckAgainLater
+failClose = false
+
+console.log('\na refused transition keeps the door')
+refusePanels = true
+closedTabs.length = 0
+const refusedTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-refused', true, 1) })
+check(closedTabs.length === 0, 'a refused panel transition does not close the tab', closedTabs)
+check(find(refusedTab.tree, (element) => element.type === 'button' && collectText(element).includes('Open Git panel')) !== undefined, 'the door stays visible when the panel refuses', collectText(refusedTab.tree).filter((entry) => entry.length < 40))
+refusePanels = false
+const recoveredTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-refused', true, 1) })
+check(closedTabs.includes('tab-refused'), 'the same record closes once the transition is possible', closedTabs)
+void recoveredTab
+
+console.log(`\n${checks - failures}/${checks} checks passed`)
+if (failures > 0) process.exitCode = 1

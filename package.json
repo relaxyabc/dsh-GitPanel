@@ -1,0 +1,44 @@
+{
+  "name": "sidebar-git",
+  "version": "0.2.0",
+  "private": true,
+  "description": "IntelliJ-style Git manager for the DSH web client: multi-repository discovery with submodules, branches, changes, commits and remotes in a full-page three-column panel",
+  "type": "module",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json"
+  ],
+  "engines": {
+    "dsh": ">=0.1.7-rc.1"
+  },
+  "meta": {
+    "title": "Git",
+    "description": "Browse workspaces, branches, changes and commits, and commit or push from a full-page tool."
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  }
+}
