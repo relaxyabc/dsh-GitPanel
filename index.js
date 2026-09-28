@@ -14,7 +14,7 @@
  * repository discovery depth, is a plain plugin Config field the Plugins page
  * edits through the Host settings service.
  *
- * @module sidebar-git
+ * @module GitPanel
  */
 import { execFile } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
@@ -1138,7 +1138,7 @@ Object.defineProperty(SCHEMA_PROTOTYPE, '~standard', {
     const node = this
     return {
       version: 1,
-      vendor: 'sidebar-git',
+      vendor: 'GitPanel',
       /**
        * Validate and normalise one raw configuration value.
        *

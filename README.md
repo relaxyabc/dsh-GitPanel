@@ -1,8 +1,8 @@
-# dsh-git
+# GitPanel
 
 **DSH Web 客户端的 Git 管理插件** —— 在右侧边栏与主面板中浏览工作区、分支、改动与提交历史,并直接完成提交、推送、分支与历史操作。类似 IntelliJ 的 Git 工具窗口,以 DSH 插件 bundle 的形式挂载。
 
-- 包名:`sidebar-git`(v0.2.0,private)
+- 包名:`GitPanel`(v0.2.0,private)
 - 运行平台:Web 客户端;要求 DSH ≥ `0.1.7-rc.1`,Host 机器装有 `git`
 - 零运行时依赖、零构建步骤:两个源文件直接交付
 
@@ -13,7 +13,7 @@
 ### 仓库与工作区
 - **多仓库发现**:递归扫描工作区根(深度可配置,默认 3 层、上限 8;最多 64 个仓库、20 000 个目录项),自动跳过 `node_modules`、`.git`、`dist`、`vendor` 等目录;嵌套的独立仓库与子模块工作树(包括位于父仓库树之外的子模块)都会被发现并标记。
 - **多工作区切换**:所有已打开工作区均可浏览;打开面板时自动选中**当前会话**所在的工作区(按会话的主视图保留关系识别,会话目录的优先级高于工作区列表顺序),工具栏下拉可随时切换。
-- **扫描深度可配置**:递归层数(1–8)是插件配置项,在**插件页面「已安装」分组里打开 `sidebar-git`** 即为该配置(见[插件配置](#插件配置));切换仓库不会重新扫描工作区。
+- **扫描深度可配置**:递归层数(1–8)是插件配置项,在**插件页面「已安装」分组里打开 `GitPanel`** 即为该配置(见[插件配置](#插件配置));切换仓库不会重新扫描工作区。
 
 ### 分支
 - 本地 / 远程分支分组展示,可折叠、可按名称过滤;当前分支带 `HEAD` 标记。
@@ -43,8 +43,8 @@
 - **主面板**:左侧面板栏的 Git 图标进入,全页三栏布局 —— 左(分支 + 改动 + 提交框)、中(历史)、右(上:提交信息,下:该提交的文件改动)。
 - **右侧边栏只当门,不留页**:右侧边栏 guide 里的 Git 胶囊、以及从上一会话恢复出来的 Git 标签页,一旦挂载就**用标签页自己的 `close()` 关掉** —— 因为布局按会话持久化,留下的标签页会跨刷新复活。并且**一次导航只开一次面板**:只被恢复、或因切会话 / 展开列而重新挂载的记录只关自己、绝不抢主区域(否则会把用户刚点开的会话顶掉)。若控制器拒绝关闭,标签页里只显示一张不读任何仓库数据的兜底卡片(标题、说明与「打开 Git 面板」按钮),不会停在一份过期的摘要上。
 - **顶栏**:工作区目录与仓库字段常显(带小标签、悬停显示完整路径),当前分支以芯片展示,刷新 / 推送按钮右置;打开面板自动选中当前会话的工作区,切换会话后面板跟随;载入期间显示进度文案。
-- **中英双语**:全部界面文案(含右侧边栏 guide 条目的标题与描述、菜单、对话框、操作提示)经 DSH locale 服务(`sidebarGit` 命名空间)输出,跟随客户端语言设置实时切换。
-- 全部样式为内联的**设计令牌样式**(`--dsw-alias-*` 变量 + 回退值),自动适配明暗两套主题;主按钮与 `HEAD` 标签使用主色淡化配色,深色模式下文字同样清晰;类名统一 `dsh-git-` 前缀。
+- **中英双语**:全部界面文案(含右侧边栏 guide 条目的标题与描述、菜单、对话框、操作提示)经 DSH locale 服务(`gitPanel` 命名空间)输出,跟随客户端语言设置实时切换。
+- 全部样式为内联的**设计令牌样式**(`--dsw-alias-*` 变量 + 回退值),自动适配明暗两套主题;主按钮与 `HEAD` 标签使用主色淡化配色,深色模式下文字同样清晰;类名统一 `git-panel-` 前缀。
 
 ### 插件配置
 <a id="插件配置"></a>
@@ -52,7 +52,7 @@
 |---|---|---|---|
 | `discoveryDepth` | number(1–8) | `3` | 仓库发现向下递归的目录层数 |
 
-配置项挂在**插件页面「已安装」分组中的 `sidebar-git`** 上:打开该包即看到「最大递归深度」表单(与官方插件把自己的配置放在自己页面上的做法一致,占用的是 bundle 自己的配置位 `plugins.bundle.config`,而不是"官方"分组里的卡片)。表单用 DSH 共享的设置表单渲染,输入后按「保存」才提交给 Host,文档只读时表单会说明。该字段声明为 `volatile`,因此 Host 侧**即时生效、无需重启**:插件按调用读取实时配置值,保存后下一次扫描就用新的深度。
+配置项挂在**插件页面「已安装」分组中的 `GitPanel`** 上:打开该包即看到「最大递归深度」表单(与官方插件把自己的配置放在自己页面上的做法一致,占用的是 bundle 自己的配置位 `plugins.bundle.config`,而不是"官方"分组里的卡片)。表单用 DSH 共享的设置表单渲染,输入后按「保存」才提交给 Host,文档只读时表单会说明。该字段声明为 `volatile`,因此 Host 侧**即时生效、无需重启**:插件按调用读取实时配置值,保存后下一次扫描就用新的深度。
 
 配置声明是零依赖手写的 schemastery 兼容图(`~standard.validate` + `{uid, refs}` 的 `toJSON`),Host 与设置表单都把它当作原生 schemastery 图投影;越界值在配置期即被拒绝,运行时读到的值始终夹取到 1–8。
 
@@ -75,7 +75,7 @@
 |---|---|
 | `index.js` | Host 半:仓库发现、`git` 子进程调用与全部解析器;注册唯一路由 `POST /api/local-git`;注入 `webServer`、`connection` |
 | `client.js` | 浏览器半:Git 面板与 launcher UI,以及本包在插件页面上的配置入口(`plugins.bundle.config`);注入 `slots`、`sidebarRightTabs`、`layout`、`configForms`;仅通过 `/api/local-git` 与 Host 交互 |
-| `cordis.patch.yml` | bundle 补丁层:把 Host 半以服务 id `sidebar-git` 插入组合 |
+| `cordis.patch.yml` | bundle 补丁层:把 Host 半以服务 id `GitPanel` 插入组合 |
 | `package.json` | `dsh.manifestVersion: 1`;client 平台 `web`,依赖 `@deepseek-ai/dsh-client-ui-sidebar-right`、`@deepseek-ai/dsh-client-ui-session`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-ui-primitives`;导出映射与 `files` 白名单 |
 | `locale/*.json` | `meta` 标题与描述的中英文案 |
 | `test/*` | 三个无框架 Node 测试(见[开发](#开发)) |
@@ -145,15 +145,15 @@ POST /api/local-git
 1. 把包安装进 profile 的依赖(`dsh plugin` 命令透传 pnpm 参数,或手动在 profile 的 `package.json` 记录依赖后安装),路径即本仓库根目录:
 
    ```sh
-   dsh plugin --profile <name> add E:\owner\dsh-git
+   dsh plugin --profile <name> add E:\owner\dsh-git-panel
    ```
 
 2. 在 profile 的 `cordis.patch.yml`(或以 `--patch` 叠加层)中加入插入块 —— 包内 `cordis.patch.yml` 即此内容:
 
    ```yaml
    - insert:
-       - id: sidebar-git
-         name: 'sidebar-git'
+       - id: GitPanel
+         name: 'GitPanel'
    ```
 
 3. 重启 profile(启用 `dsh-hmr` 时自动重载)。
@@ -165,7 +165,7 @@ POST /api/local-git
 - 左侧**面板栏**出现 Git 图标,进入全页三栏 Git 面板;
 - **右侧边栏**的 guide 胶囊里也有 Git:点击即**打开全页面板并关掉那张标签页**,所以回到会话后右侧边栏不会残留 Git 标签页;
 - 顶栏常显**工作区目录**与**仓库**字段(下拉可切换),当前分支以芯片展示;面板打开时自动选中当前会话所在的工作区。
-- 插件页面「已安装」分组里的 **`sidebar-git`** 打开即见 **「最大递归深度」** 配置;输入后按保存写入 profile 配置,即时生效。
+- 插件页面「已安装」分组里的 **`GitPanel`** 打开即见 **「最大递归深度」** 配置;输入后按保存写入 profile 配置,即时生效。
 
 ---
 
@@ -206,7 +206,7 @@ node test/preview.mjs       # 视觉稿:在临时仓库上渲染真实组件,输
     disabled: false
     config:
       root:
-        - E:/owner/dsh-git      # 指向本仓库;删掉该条目即回到 root: []
+        - E:/owner/dsh-git-panel      # 指向本仓库;删掉该条目即回到 root: []
   ```
 
 ---
@@ -214,7 +214,7 @@ node test/preview.mjs       # 视觉稿:在临时仓库上渲染真实组件,输
 ## 目录结构
 
 ```
-dsh-git/                                 # 插件包 sidebar-git(仓库根即包根)
+dsh-git-panel/                           # 插件包 GitPanel(仓库根即包根)
 ├─ package.json                          # bundle 清单(manifestVersion 1、导出映射、files 白名单)
 ├─ cordis.patch.yml                      # Host 半的插入补丁
 ├─ index.js                              # Host 半:发现 / git 子进程 / 解析器 / 路由

@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { apply, Config } from '../index.js'
 
 /** Isolated global git config, so the harness never reads the operator's identity. */
-const GIT_CONFIG = join(tmpdir(), `dsh-git-e2e-config-${process.pid}`)
+const GIT_CONFIG = join(tmpdir(), `git-panel-e2e-config-${process.pid}`)
 writeFileSync(GIT_CONFIG, '[user]\n\tname = Test\n\temail = test@example.com\n[protocol "file"]\n\tallow = always\n')
 
 const ENV = {
@@ -113,7 +113,7 @@ async function call(op, args) {
   return { status: response.status, body: await response.json() }
 }
 
-const root = mkdtempSync(join(tmpdir(), 'dsh-git-e2e-'))
+const root = mkdtempSync(join(tmpdir(), 'git-panel-e2e-'))
 console.log(`workspace: ${root}`)
 
 try {

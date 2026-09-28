@@ -1,4 +1,4 @@
-# AGENTS.md —— dsh-git 开发规范
+# AGENTS.md —— GitPanel 开发规范
 
 本文面向在本仓库工作的人类开发者与 AI 编码代理。动手前先读完:这里记录的不是通用风格偏好,而是本仓库**刻意做出的架构选择**。与这些约定相悖的改动需要在 PR 中明确说明理由,否则会被要求返工。
 
@@ -6,7 +6,7 @@
 
 ## 1. 这个仓库是什么
 
-`sidebar-git` 是一个 **DSH 插件 bundle**:给 DeepSeek Harness 的 Web 客户端添加一个 Git 管理工具(全页三栏面板;右侧边栏的 guide 只把它当门打开,不留标签页)。关键事实:
+`GitPanel` 是一个 **DSH 插件 bundle**:给 DeepSeek Harness 的 Web 客户端添加一个 Git 管理工具(全页三栏面板;右侧边栏的 guide 只把它当门打开,不留标签页)。关键事实:
 
 - **零运行时依赖、零构建步骤**:全部代码就是 `index.js` + `client.js` 两个文件,交付什么运行什么。
 - **一对"半"组成**:Host 半(Node,文件系统与 `git` 子进程)和浏览器半(React UI),通过唯一路由 `POST /api/local-git` 通信。
@@ -15,9 +15,9 @@
 ## 2. 目录结构
 
 ```
-dsh-git/                # 仓库根即包根(包名 sidebar-git)
+dsh-git-panel/         # 仓库根即包根(包名 GitPanel)
 ├─ package.json        # 清单:dsh.manifestVersion / client.inject / exports / files 白名单
-├─ cordis.patch.yml    # Host 半的插入补丁(服务 id: sidebar-git)
+├─ cordis.patch.yml    # Host 半的插入补丁(服务 id: GitPanel)
 ├─ index.js            # Host 半:发现、git 子进程、解析器、路由 —— 唯一允许碰文件系统与进程的文件
 ├─ client.js           # 浏览器半:面板 UI(右侧边栏只当门)、插件页面配置表单、菜单、对话框、内联样式
 ├─ icon.svg            # 面板图标
@@ -52,8 +52,8 @@ dsh-git/                # 仓库根即包根(包名 sidebar-git)
 - **布尔表达可读性**:条件写成 `args.staged === true`、`file.staged !== true` 这类完整比较。
 - **Host 半分层**:`parseXxx` 是纯函数、不碰 IO;`readXxx` / `writeXxx` 做 IO、不解析;对外操作名就是 `READ_OPERATIONS` / `WRITE_OPERATIONS` 的键,签名统一为 `(args) => Promise<object>`。
 - **浏览器半**:`const h = React.createElement`,一律用 `h()` 不用 JSX;组件是纯函数;上下文菜单数据驱动(`items` 数组)。
-- **UI 文案与国际化**:面向用户的字符串全部收在 `client.js` 顶部的 `en` / `zh` 双语词典里(命名空间 `sidebarGit`,经 `ctx.locale.register` 注册、`ctx.locale.bind` 绑定),渲染代码一律通过 `t('key')` 取词,不许散落字面量;带参数的文案用 `{name}` 占位符 + `fill()` 填充;槽位组件经注册项 `locale: LOCALE_NS` 接收框架注入的 `t` prop,guide 条目等框架外读取用 apply 作用域绑定的 `t`。新增文案时 en/zh 两词典必须成对补齐;`locale/*.json` 只承载 `meta` 标题/描述,改动 meta 时 en/zh 同步。
-- **样式**:全部内联在 `STYLES` 数组;类名前缀 `dsh-git-`;只用 `--dsw-alias-*` 设计令牌,且**每个令牌必须带字面回退值**。禁止硬编码颜色/字体替代令牌。
+- **UI 文案与国际化**:面向用户的字符串全部收在 `client.js` 顶部的 `en` / `zh` 双语词典里(命名空间 `gitPanel`,经 `ctx.locale.register` 注册、`ctx.locale.bind` 绑定),渲染代码一律通过 `t('key')` 取词,不许散落字面量;带参数的文案用 `{name}` 占位符 + `fill()` 填充;槽位组件经注册项 `locale: LOCALE_NS` 接收框架注入的 `t` prop,guide 条目等框架外读取用 apply 作用域绑定的 `t`。新增文案时 en/zh 两词典必须成对补齐;`locale/*.json` 只承载 `meta` 标题/描述,改动 meta 时 en/zh 同步。
+- **样式**:全部内联在 `STYLES` 数组;类名前缀 `git-panel-`;只用 `--dsw-alias-*` 设计令牌,且**每个令牌必须带字面回退值**。禁止硬编码颜色/字体替代令牌。
 - **语言约定**:代码、注释、标识符、UI 文案用英文;README 与本文件用中文。
 
 ## 5. 如何新增一个操作(标准流程)

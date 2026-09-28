@@ -1,3 +1,3 @@
 - insert:
-    - id: sidebar-git
-      name: 'sidebar-git'
+    - id: GitPanel
+      name: 'GitPanel'

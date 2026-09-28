@@ -18,7 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const outDir = join(here, '..', 'preview')
 
 /** A repository that carries branches, changes, a commit history and a submodule. */
-const workspace = join(tmpdir(), 'dsh-git-preview')
+const workspace = join(tmpdir(), 'git-panel-preview')
 rmSync(workspace, { recursive: true, force: true })
 mkdirSync(workspace, { recursive: true })
 
@@ -256,7 +256,7 @@ loaded.apply({
       previewLocale.dicts[ns] = dicts
       return () => {}
     },
-    bind: () => (key) => previewLocale.dicts.sidebarGit?.[PREVIEW_LANG]?.[key] ?? key,
+    bind: () => (key) => previewLocale.dicts.gitPanel?.[PREVIEW_LANG]?.[key] ?? key,
   },
   sidebarRightTabs: { register: () => () => {} },
   slots: {
@@ -329,7 +329,7 @@ async function render(drive) {
     currentOwner = instance
     instance.tree = panelComponent({
       sessionId: 'session-1',
-      useWorkspaces: () => [{ path: workspace, title: 'dsh-git-preview' }],
+      useWorkspaces: () => [{ path: workspace, title: 'git-panel-preview' }],
       useSessions: (selector) => selector({ ids: ['session-1'], byId: { 'session-1': { cwd: workspace, retainedBy: { mainView: 1 } } } }),
     })
     currentOwner = activeOwner
@@ -419,7 +419,7 @@ const tree = await render()
 const modalTree = await render(async (view) => {
   const row = findNode(
     view.tree,
-    (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-git-row') && typeof element.props?.onDoubleClick === 'function' && textOf(element).includes('index.ts'),
+    (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onDoubleClick === 'function' && textOf(element).includes('index.ts'),
   )
   if (row === undefined) {
     console.error('[preview] no changed-path row was found; the modal artefact is empty')

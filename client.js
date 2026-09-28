@@ -10,16 +10,16 @@
  * Every Host interaction goes through the authenticated `/api/local-git` route
  * the bundle's Host half owns.
  *
- * @module sidebar-git
+ * @module GitPanel
  */
 window.__ModuleLoader__.load({
-  id: 'sidebar-git',
+  id: 'GitPanel',
   factory(require) {
     const React = require('react')
     const h = React.createElement
 
     /** This implementation's identity in the right-Sidebar tab system. */
-    const PLUGIN_ID = 'sidebar-git'
+    const PLUGIN_ID = 'GitPanel'
 
     /** The right-Sidebar tab kind this package owns. */
     const GIT_KIND = 'git'
@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     const MAX_DIFF_ROWS = 3000
 
     /** The plugin entry whose configuration the Plugins page card edits. */
-    const SETTINGS_NS = 'sidebar-git'
+    const SETTINGS_NS = 'GitPanel'
 
     /** The one configuration field the Plugins page card edits. */
     const DEPTH_FIELD = 'discoveryDepth'
@@ -127,7 +127,7 @@ window.__ModuleLoader__.load({
      * `zh` and is read through `t()` at render time, so a language switch needs
      * no re-registration; `locale/*.json` stays manifest metadata only.
      */
-    const LOCALE_NS = 'sidebarGit'
+    const LOCALE_NS = 'gitPanel'
 
     /** English copy (the fallback language). */
     const en = {
@@ -500,109 +500,109 @@ window.__ModuleLoader__.load({
 
     /** The token-only stylesheet: no Harness Client package is imported. */
     const STYLES = [
-      '.dsh-git{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-base,transparent)}',
-      '.dsh-git *{box-sizing:border-box}',
-      '.dsh-git-bar{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.dsh-git-bar-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}',
-      '.dsh-git-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:360px}',
-      '.dsh-git-field-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-field .dsh-git-select{width:100%;max-width:none;padding:3px 8px}',
-      '.dsh-git-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
-      '.dsh-git-branch-chip-glyph{display:inline-flex;color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-branch-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}',
-      '.dsh-git-spacer{flex:1;min-width:4px}',
-      '.dsh-git-select{max-width:260px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 6px;font:inherit;cursor:pointer}',
-      '.dsh-git-input{border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 7px;font:inherit;min-width:0}',
-      '.dsh-git-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 8px;font:inherit;cursor:pointer;white-space:nowrap}',
-      '.dsh-git-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
-      '.dsh-git-btn:disabled{opacity:.45;cursor:default}',
-      '.dsh-git-btn-primary{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 26%,transparent)}',
-      '.dsh-git-cols{flex:1;min-height:0;display:flex}',
-      '.dsh-git-col{display:flex;flex-direction:column;min-height:0;min-width:0}',
-      '.dsh-git-col-left{width:268px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.dsh-git-col-mid{flex:1;min-width:220px}',
-      '.dsh-git-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.dsh-git-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
-      '.dsh-git-pane-top{flex:1 1 46%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.dsh-git-pane-grow{flex:1}',
-      '.dsh-git-pane-head{display:flex;align-items:center;gap:6px;flex:none;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.dsh-git-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
-      '.dsh-git-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
-      '.dsh-git-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-row{display:flex;align-items:center;gap:7px;padding:3px 10px;cursor:default}',
-      '.dsh-git-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
-      '.dsh-git-row-sel,.dsh-git-row-sel:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 18%,transparent)}',
-      '.dsh-git-branch{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-git-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px}',
-      '.dsh-git-group{display:flex;align-items:center;gap:6px;width:100%;padding:5px 9px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left}',
-      '.dsh-git-group:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08))}',
-      '.dsh-git-caret{flex:none;width:10px;font-size:9px;opacity:.75}',
-      '.dsh-git-tag{flex:none;padding:0 5px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 14%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-chip{flex:none;padding:0 5px;border-radius:3px;font-size:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16));color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-status{flex:none;width:14px;text-align:center;font-weight:700;font-size:11px;font-family:ui-monospace,monospace}',
-      '.dsh-git-status-M{color:var(--dsw-alias-state-warn-primary,#9a6700)}',
-      '.dsh-git-status-A{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.dsh-git-status-D{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.dsh-git-status-R{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-status-C{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-status-U{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.dsh-git-status-\\?{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.dsh-git-check{flex:none;width:14px;height:14px;accent-color:var(--dsw-alias-brand-primary,#0969da);cursor:pointer}',
-      '.dsh-git-numstat{flex:none;display:flex;gap:4px;font-family:ui-monospace,monospace;font-size:10px}',
-      '.dsh-git-plus{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.dsh-git-minus{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.dsh-git-commit{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}',
-      '.dsh-git-commit-top{display:flex;align-items:center;gap:6px;min-width:0}',
-      '.dsh-git-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-git-meta{display:flex;gap:7px;overflow:hidden;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;white-space:nowrap}',
-      '.dsh-git-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}',
-      '.dsh-git-detail{flex:1 1 46%;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.dsh-git-detail-head{flex:none;padding:9px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.dsh-git-detail-subject{font-weight:600;font-size:13px;margin-bottom:5px;word-break:break-word}',
-      '.dsh-git-detail-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:11.5px}',
-      '.dsh-git-kv-key{color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-kv-value{overflow:hidden;text-overflow:ellipsis;word-break:break-all}',
-      '.dsh-git-msg{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.dsh-git-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
-      '.dsh-git-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
-      '.dsh-git-banner{margin:6px 10px;padding:6px 8px;border-radius:5px;word-break:break-word}',
-      '.dsh-git-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.dsh-git-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.dsh-git-banner-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#9a6700) 14%,transparent);color:var(--dsw-alias-state-warn-primary,#9a6700)}',
-      '.dsh-git-sbs{display:flex;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;tab-size:4}',
-      '.dsh-git-sbs-columns{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24))}',
-      '.dsh-git-sbs-column{padding:3px 9px;font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-sbs-hunk{padding:3px 9px;color:var(--dsw-alias-brand-primary,#0969da);background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.dsh-git-sbs-row{display:grid;grid-template-columns:44px minmax(0,1fr) 44px minmax(0,1fr)}',
-      '.dsh-git-sbs-no{padding:0 6px;text-align:right;color:var(--dsw-alias-label-secondary,#57606a);opacity:.7;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));user-select:none}',
-      '.dsh-git-sbs-cell{padding:0 9px;white-space:pre-wrap;word-break:break-word;min-width:0}',
-      '.dsh-git-sbs-del{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 14%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.dsh-git-sbs-add{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 14%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.dsh-git-sbs-blank{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.09))}',
-      '.dsh-git-ctx{position:fixed;z-index:90;min-width:230px;padding:4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 8px 28px rgba(0,0,0,.24);display:flex;flex-direction:column;gap:1px}',
-      '.dsh-git-ctx-head{padding:4px 8px 5px;font-size:11px;color:var(--dsw-alias-label-secondary,#57606a);border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));margin-bottom:3px;word-break:break-all}',
-      '.dsh-git-ctx-item{display:flex;align-items:center;gap:6px;width:100%;padding:4px 8px;border:0;border-radius:4px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-      '.dsh-git-ctx-item:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
-      '.dsh-git-ctx-item:disabled{opacity:.5;cursor:default}',
-      '.dsh-git-ctx-sep{height:1px;margin:3px 0;background:var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.dsh-git-scrim{position:fixed;inset:0;z-index:89}',
-      '.dsh-git-dialog{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,90vw);display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3)}',
-      '.dsh-git-dialog-title{font-weight:600}',
-      '.dsh-git-dialog-actions{display:flex;justify-content:flex-end;gap:7px}',
-      '.dsh-git-modal{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1180px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3);overflow:hidden}',
-      '.dsh-git-modal-head{flex:none;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.dsh-git-modal-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-git-modal-body{flex:1;min-height:0;overflow:auto}',
-      '.dsh-git-launch{display:flex;flex-direction:column;gap:10px;padding:14px}',
-      '.dsh-git-launch-title{font-weight:600;font-size:13px}',
-      '.dsh-git-launch-text{color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.dsh-git-launch-icon{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.dsh-git-launch-actions{display:flex;margin-top:2px}',
+      '.git-panel{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-base,transparent)}',
+      '.git-panel *{box-sizing:border-box}',
+      '.git-panel-bar{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
+      '.git-panel-bar-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}',
+      '.git-panel-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:360px}',
+      '.git-panel-field-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-field .git-panel-select{width:100%;max-width:none;padding:3px 8px}',
+      '.git-panel-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-branch-chip-glyph{display:inline-flex;color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-branch-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}',
+      '.git-panel-spacer{flex:1;min-width:4px}',
+      '.git-panel-select{max-width:260px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 6px;font:inherit;cursor:pointer}',
+      '.git-panel-input{border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 7px;font:inherit;min-width:0}',
+      '.git-panel-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 8px;font:inherit;cursor:pointer;white-space:nowrap}',
+      '.git-panel-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
+      '.git-panel-btn:disabled{opacity:.45;cursor:default}',
+      '.git-panel-btn-primary{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 26%,transparent)}',
+      '.git-panel-cols{flex:1;min-height:0;display:flex}',
+      '.git-panel-col{display:flex;flex-direction:column;min-height:0;min-width:0}',
+      '.git-panel-col-left{width:268px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-col-mid{flex:1;min-width:220px}',
+      '.git-panel-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
+      '.git-panel-pane-top{flex:1 1 46%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-pane-grow{flex:1}',
+      '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
+      '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
+      '.git-panel-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-row{display:flex;align-items:center;gap:7px;padding:3px 10px;cursor:default}',
+      '.git-panel-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
+      '.git-panel-row-sel,.git-panel-row-sel:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 18%,transparent)}',
+      '.git-panel-branch{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.git-panel-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px}',
+      '.git-panel-group{display:flex;align-items:center;gap:6px;width:100%;padding:5px 9px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left}',
+      '.git-panel-group:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08))}',
+      '.git-panel-caret{flex:none;width:10px;font-size:9px;opacity:.75}',
+      '.git-panel-tag{flex:none;padding:0 5px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 14%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-chip{flex:none;padding:0 5px;border-radius:3px;font-size:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16));color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-status{flex:none;width:14px;text-align:center;font-weight:700;font-size:11px;font-family:ui-monospace,monospace}',
+      '.git-panel-status-M{color:var(--dsw-alias-state-warn-primary,#9a6700)}',
+      '.git-panel-status-A{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-status-D{color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-status-R{color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-status-C{color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-status-U{color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-status-\\?{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-check{flex:none;width:14px;height:14px;accent-color:var(--dsw-alias-brand-primary,#0969da);cursor:pointer}',
+      '.git-panel-numstat{flex:none;display:flex;gap:4px;font-family:ui-monospace,monospace;font-size:10px}',
+      '.git-panel-plus{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-minus{color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-commit{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}',
+      '.git-panel-commit-top{display:flex;align-items:center;gap:6px;min-width:0}',
+      '.git-panel-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.git-panel-meta{display:flex;gap:7px;overflow:hidden;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;white-space:nowrap}',
+      '.git-panel-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}',
+      '.git-panel-detail{flex:1 1 46%;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-detail-head{flex:none;padding:9px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-detail-subject{font-weight:600;font-size:13px;margin-bottom:5px;word-break:break-word}',
+      '.git-panel-detail-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:11.5px}',
+      '.git-panel-kv-key{color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-kv-value{overflow:hidden;text-overflow:ellipsis;word-break:break-all}',
+      '.git-panel-msg{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
+      '.git-panel-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
+      '.git-panel-banner{margin:6px 10px;padding:6px 8px;border-radius:5px;word-break:break-word}',
+      '.git-panel-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-banner-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#9a6700) 14%,transparent);color:var(--dsw-alias-state-warn-primary,#9a6700)}',
+      '.git-panel-sbs{display:flex;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;tab-size:4}',
+      '.git-panel-sbs-columns{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24))}',
+      '.git-panel-sbs-column{padding:3px 9px;font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-sbs-hunk{padding:3px 9px;color:var(--dsw-alias-brand-primary,#0969da);background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
+      '.git-panel-sbs-row{display:grid;grid-template-columns:44px minmax(0,1fr) 44px minmax(0,1fr)}',
+      '.git-panel-sbs-no{padding:0 6px;text-align:right;color:var(--dsw-alias-label-secondary,#57606a);opacity:.7;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));user-select:none}',
+      '.git-panel-sbs-cell{padding:0 9px;white-space:pre-wrap;word-break:break-word;min-width:0}',
+      '.git-panel-sbs-del{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 14%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
+      '.git-panel-sbs-add{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 14%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-sbs-blank{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.09))}',
+      '.git-panel-ctx{position:fixed;z-index:90;min-width:230px;padding:4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 8px 28px rgba(0,0,0,.24);display:flex;flex-direction:column;gap:1px}',
+      '.git-panel-ctx-head{padding:4px 8px 5px;font-size:11px;color:var(--dsw-alias-label-secondary,#57606a);border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));margin-bottom:3px;word-break:break-all}',
+      '.git-panel-ctx-item{display:flex;align-items:center;gap:6px;width:100%;padding:4px 8px;border:0;border-radius:4px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+      '.git-panel-ctx-item:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
+      '.git-panel-ctx-item:disabled{opacity:.5;cursor:default}',
+      '.git-panel-ctx-sep{height:1px;margin:3px 0;background:var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-scrim{position:fixed;inset:0;z-index:89}',
+      '.git-panel-dialog{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,90vw);display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3)}',
+      '.git-panel-dialog-title{font-weight:600}',
+      '.git-panel-dialog-actions{display:flex;justify-content:flex-end;gap:7px}',
+      '.git-panel-modal{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1180px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3);overflow:hidden}',
+      '.git-panel-modal-head{flex:none;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-modal-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.git-panel-modal-body{flex:1;min-height:0;overflow:auto}',
+      '.git-panel-launch{display:flex;flex-direction:column;gap:10px;padding:14px}',
+      '.git-panel-launch-title{font-weight:600;font-size:13px}',
+      '.git-panel-launch-text{color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-launch-icon{color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-launch-actions{display:flex;margin-top:2px}',
     ].join('\n')
 
     /**
@@ -655,20 +655,20 @@ window.__ModuleLoader__.load({
       return h(
         React.Fragment,
         null,
-        h('div', { className: 'dsh-git-scrim', onClick: onClose, onContextMenu: (event) => { event.preventDefault(); onClose() } }),
+        h('div', { className: 'git-panel-scrim', onClick: onClose, onContextMenu: (event) => { event.preventDefault(); onClose() } }),
         h(
           'div',
-          { className: 'dsh-git-ctx', style: { left, top } },
-          h('div', { className: 'dsh-git-ctx-head' }, menu.title),
+          { className: 'git-panel-ctx', style: { left, top } },
+          h('div', { className: 'git-panel-ctx-head' }, menu.title),
           menu.items.map((item, index) =>
             item.separator === true
-              ? h('div', { key: `sep-${index}`, className: 'dsh-git-ctx-sep' })
+              ? h('div', { key: `sep-${index}`, className: 'git-panel-ctx-sep' })
               : h(
                   'button',
                   {
                     key: `${item.label}-${index}`,
                     type: 'button',
-                    className: 'dsh-git-ctx-item',
+                    className: 'git-panel-ctx-item',
                     disabled: item.disabled === true,
                     title: item.title,
                     onClick: () => {
@@ -694,21 +694,21 @@ window.__ModuleLoader__.load({
       return h(
         React.Fragment,
         null,
-        h('div', { className: 'dsh-git-scrim', onClick: onClose }),
+        h('div', { className: 'git-panel-scrim', onClick: onClose }),
         h(
           'div',
-          { className: 'dsh-git-dialog' },
-          h('div', { className: 'dsh-git-dialog-title' }, dialog.title),
-          dialog.text === undefined ? null : h('div', { className: cx('dsh-git-mono', 'dsh-git-detail-body') }, dialog.text),
-          dialog.warning === undefined ? null : h('div', { className: cx('dsh-git-banner', 'dsh-git-banner-error'), style: { margin: 0 } }, dialog.warning),
+          { className: 'git-panel-dialog' },
+          h('div', { className: 'git-panel-dialog-title' }, dialog.title),
+          dialog.text === undefined ? null : h('div', { className: cx('git-panel-mono', 'git-panel-detail-body') }, dialog.text),
+          dialog.warning === undefined ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-error'), style: { margin: 0 } }, dialog.warning),
           dialog.input === undefined
             ? null
-            : h('textarea', { className: 'dsh-git-textarea', value, autoFocus: true, onChange: (event) => setValue(event.target.value) }),
+            : h('textarea', { className: 'git-panel-textarea', value, autoFocus: true, onChange: (event) => setValue(event.target.value) }),
           h(
             'div',
-            { className: 'dsh-git-dialog-actions' },
-            h('button', { type: 'button', className: 'dsh-git-btn', onClick: onClose }, t('cancel')),
-            h('button', { type: 'button', className: cx('dsh-git-btn', 'dsh-git-btn-primary'), onClick: () => { onClose(); dialog.run(value) } }, dialog.confirm ?? t('ok')),
+            { className: 'git-panel-dialog-actions' },
+            h('button', { type: 'button', className: 'git-panel-btn', onClick: onClose }, t('cancel')),
+            h('button', { type: 'button', className: cx('git-panel-btn', 'git-panel-btn-primary'), onClick: () => { onClose(); dialog.run(value) } }, dialog.confirm ?? t('ok')),
           ),
         ),
       )
@@ -829,43 +829,43 @@ window.__ModuleLoader__.load({
      */
     function SideBySideDiff({ text, t = boundTranslate }) {
       const parsed = React.useMemo(() => parseUnifiedDiff(text), [text])
-      if (parsed.binary) return h('div', { className: 'dsh-git-empty' }, t('diff.binary'))
-      if (parsed.hunks.length === 0) return h('div', { className: 'dsh-git-empty' }, t('diff.empty'))
+      if (parsed.binary) return h('div', { className: 'git-panel-empty' }, t('diff.binary'))
+      if (parsed.hunks.length === 0) return h('div', { className: 'git-panel-empty' }, t('diff.empty'))
       return h(
         'div',
-        { className: 'dsh-git-sbs' },
+        { className: 'git-panel-sbs' },
         h(
           'div',
-          { className: 'dsh-git-sbs-columns' },
-          h('span', { className: 'dsh-git-sbs-column' }, t('diff.before')),
-          h('span', { className: 'dsh-git-sbs-column' }, t('diff.after')),
+          { className: 'git-panel-sbs-columns' },
+          h('span', { className: 'git-panel-sbs-column' }, t('diff.before')),
+          h('span', { className: 'git-panel-sbs-column' }, t('diff.after')),
         ),
         parsed.hunks.map((hunk, hunkIndex) =>
           h(
             'div',
             { key: `hunk-${hunkIndex}` },
-            h('div', { className: 'dsh-git-sbs-hunk' }, hunk.header),
+            h('div', { className: 'git-panel-sbs-hunk' }, hunk.header),
             hunk.rows.map((row, rowIndex) =>
               h(
                 'div',
-                { key: `row-${hunkIndex}-${rowIndex}`, className: 'dsh-git-sbs-row' },
-                h('span', { className: 'dsh-git-sbs-no' }, row.leftNo === null ? '' : String(row.leftNo)),
+                { key: `row-${hunkIndex}-${rowIndex}`, className: 'git-panel-sbs-row' },
+                h('span', { className: 'git-panel-sbs-no' }, row.leftNo === null ? '' : String(row.leftNo)),
                 h(
                   'span',
-                  { className: cx('dsh-git-sbs-cell', row.left === null ? 'dsh-git-sbs-blank' : row.kind === 'change' || row.kind === 'del' ? 'dsh-git-sbs-del' : false) },
+                  { className: cx('git-panel-sbs-cell', row.left === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'del' ? 'git-panel-sbs-del' : false) },
                   row.left === null ? '' : row.left,
                 ),
-                h('span', { className: 'dsh-git-sbs-no' }, row.rightNo === null ? '' : String(row.rightNo)),
+                h('span', { className: 'git-panel-sbs-no' }, row.rightNo === null ? '' : String(row.rightNo)),
                 h(
                   'span',
-                  { className: cx('dsh-git-sbs-cell', row.right === null ? 'dsh-git-sbs-blank' : row.kind === 'change' || row.kind === 'add' ? 'dsh-git-sbs-add' : false) },
+                  { className: cx('git-panel-sbs-cell', row.right === null ? 'git-panel-sbs-blank' : row.kind === 'change' || row.kind === 'add' ? 'git-panel-sbs-add' : false) },
                   row.right === null ? '' : row.right,
                 ),
               ),
             ),
           ),
         ),
-        parsed.truncated ? h('div', { className: 'dsh-git-empty' }, fill(t('diff.truncated'), { count: MAX_DIFF_ROWS })) : null,
+        parsed.truncated ? h('div', { className: 'git-panel-empty' }, fill(t('diff.truncated'), { count: MAX_DIFF_ROWS })) : null,
       )
     }
 
@@ -879,7 +879,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
-          className: cx('dsh-git-row', selected ? 'dsh-git-row-sel' : false),
+          className: cx('git-panel-row', selected ? 'git-panel-row-sel' : false),
           title: file.path,
           onClick: () => onSelect(file),
           onDoubleClick: () => {
@@ -892,20 +892,20 @@ window.__ModuleLoader__.load({
         },
         h('input', {
           type: 'checkbox',
-          className: 'dsh-git-check',
+          className: 'git-panel-check',
           checked: file.staged === true,
           disabled: busy,
           title: file.staged === true ? t('unstageAll') : t('stageAll'),
           onClick: (event) => event.stopPropagation(),
           onChange: () => onToggle(file),
         }),
-        h('span', { className: cx('dsh-git-status', `dsh-git-status-${statusText(file.status)}`) }, statusText(file.status)),
-        h('span', { className: 'dsh-git-branch' }, basename(file.path)),
+        h('span', { className: cx('git-panel-status', `git-panel-status-${statusText(file.status)}`) }, statusText(file.status)),
+        h('span', { className: 'git-panel-branch' }, basename(file.path)),
         h(
           'span',
-          { className: 'dsh-git-numstat' },
-          file.added > 0 ? h('span', { className: 'dsh-git-plus' }, `+${file.added}`) : null,
-          file.removed > 0 ? h('span', { className: 'dsh-git-minus' }, `-${file.removed}`) : null,
+          { className: 'git-panel-numstat' },
+          file.added > 0 ? h('span', { className: 'git-panel-plus' }, `+${file.added}`) : null,
+          file.removed > 0 ? h('span', { className: 'git-panel-minus' }, `-${file.removed}`) : null,
         ),
       )
     }
@@ -921,7 +921,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
-          className: cx('dsh-git-row', branch.current ? 'dsh-git-row-sel' : false),
+          className: cx('git-panel-row', branch.current ? 'git-panel-row-sel' : false),
           title: branch.upstream === null ? branch.name : `${branch.name} ${ARROW} ${branch.upstream}`,
           onDoubleClick: () => {
             if (branch.current) return
@@ -932,10 +932,10 @@ window.__ModuleLoader__.load({
             onContextMenu(event, branch, remote)
           },
         },
-        branch.current ? h('span', { className: 'dsh-git-tag' }, 'HEAD') : h('span', { className: 'dsh-git-status', style: { opacity: 0.45 } }, BRANCH_GLYPH),
-        h('span', { className: 'dsh-git-branch' }, remote ? branch.name.replace(/^[^/]+\//, '') : branch.name),
-        remoteName === null ? null : h('span', { className: 'dsh-git-chip' }, remoteName),
-        branch.current || busy ? null : h('span', { className: 'dsh-git-count' }, ENTER_GLYPH),
+        branch.current ? h('span', { className: 'git-panel-tag' }, 'HEAD') : h('span', { className: 'git-panel-status', style: { opacity: 0.45 } }, BRANCH_GLYPH),
+        h('span', { className: 'git-panel-branch' }, remote ? branch.name.replace(/^[^/]+\//, '') : branch.name),
+        remoteName === null ? null : h('span', { className: 'git-panel-chip' }, remoteName),
+        branch.current || busy ? null : h('span', { className: 'git-panel-count' }, ENTER_GLYPH),
       )
     }
 
@@ -949,7 +949,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
-          className: cx('dsh-git-row', selected ? 'dsh-git-row-sel' : false),
+          className: cx('git-panel-row', selected ? 'git-panel-row-sel' : false),
           onClick: () => onSelect(commit),
           onContextMenu: (event) => {
             event.preventDefault()
@@ -957,19 +957,19 @@ window.__ModuleLoader__.load({
             onContextMenu(event, commit)
           },
         },
-        h('span', { className: cx('dsh-git-status', 'dsh-git-mono'), style: { width: 'auto', opacity: 0.7, fontSize: 10.5 } }, commit.short),
+        h('span', { className: cx('git-panel-status', 'git-panel-mono'), style: { width: 'auto', opacity: 0.7, fontSize: 10.5 } }, commit.short),
         h(
           'div',
-          { className: 'dsh-git-commit' },
-          h('div', { className: 'dsh-git-commit-top' }, h('span', { className: 'dsh-git-subject' }, commit.subject || t('noMessage'))),
+          { className: 'git-panel-commit' },
+          h('div', { className: 'git-panel-commit-top' }, h('span', { className: 'git-panel-subject' }, commit.subject || t('noMessage'))),
           h(
             'div',
-            { className: 'dsh-git-meta' },
+            { className: 'git-panel-meta' },
             h('span', null, commit.author || 'unknown'),
             h('span', null, relativeAge(commit.timestamp) === '' ? '' : `${relativeAge(commit.timestamp)} ago`),
           ),
         ),
-        commit.refs.length === 0 ? null : h('span', { className: 'dsh-git-chip' }, commit.refs[0].replace('HEAD -> ', '').replace('tag: ', '')),
+        commit.refs.length === 0 ? null : h('span', { className: 'git-panel-chip' }, commit.refs[0].replace('HEAD -> ', '').replace('tag: ', '')),
       )
     }
 
@@ -985,10 +985,10 @@ window.__ModuleLoader__.load({
         { style: { display: 'flex', alignItems: 'center' } },
         h(
           'button',
-          { type: 'button', className: 'dsh-git-group', onClick: onToggle, 'aria-expanded': open },
-          h('span', { className: 'dsh-git-caret' }, open ? CARET_OPEN : CARET_CLOSED),
-          h('span', { className: 'dsh-git-pane-title', style: { textTransform: 'none' } }, label),
-          typeof count === 'number' ? h('span', { className: 'dsh-git-count' }, String(count)) : null,
+          { type: 'button', className: 'git-panel-group', onClick: onToggle, 'aria-expanded': open },
+          h('span', { className: 'git-panel-caret' }, open ? CARET_OPEN : CARET_CLOSED),
+          h('span', { className: 'git-panel-pane-title', style: { textTransform: 'none' } }, label),
+          typeof count === 'number' ? h('span', { className: 'git-panel-count' }, String(count)) : null,
         ),
         actions === undefined ? null : h('div', { style: { display: 'flex', gap: 4, paddingRight: 9 } }, actions),
       )
@@ -1017,27 +1017,27 @@ window.__ModuleLoader__.load({
       const empty = text !== null && String(text).trim() === ''
       const body =
         text === null
-          ? h('div', { className: 'dsh-git-empty' }, t('loading'))
+          ? h('div', { className: 'git-panel-empty' }, t('loading'))
           : empty && stale === true && commit !== null
-            ? h('div', { className: cx('dsh-git-banner', 'dsh-git-banner-warn'), style: { margin: 10 } }, t('notice.staleHost'))
+            ? h('div', { className: cx('git-panel-banner', 'git-panel-banner-warn'), style: { margin: 10 } }, t('notice.staleHost'))
             : h(SideBySideDiff, { text, t })
       return h(
         React.Fragment,
         null,
-        h('div', { className: 'dsh-git-scrim', onClick: onClose }),
+        h('div', { className: 'git-panel-scrim', onClick: onClose }),
         h(
           'div',
-          { className: 'dsh-git-modal' },
+          { className: 'git-panel-modal' },
           h(
             'div',
-            { className: 'dsh-git-modal-head' },
-            h('span', { className: 'dsh-git-modal-title', title: file.path }, basename(file.path)),
-            h('span', { className: 'dsh-git-sub', title: file.path }, file.path),
-            h('span', { className: 'dsh-git-chip' }, commit === null ? t('diff.working') : fill(t('diff.committed'), { short: commit.short })),
-            h('span', { className: 'dsh-git-spacer' }),
-            h('button', { type: 'button', className: 'dsh-git-btn', onClick: onClose, title: t('close') }, CLOSE_GLYPH),
+            { className: 'git-panel-modal-head' },
+            h('span', { className: 'git-panel-modal-title', title: file.path }, basename(file.path)),
+            h('span', { className: 'git-panel-sub', title: file.path }, file.path),
+            h('span', { className: 'git-panel-chip' }, commit === null ? t('diff.working') : fill(t('diff.committed'), { short: commit.short })),
+            h('span', { className: 'git-panel-spacer' }),
+            h('button', { type: 'button', className: 'git-panel-btn', onClick: onClose, title: t('close') }, CLOSE_GLYPH),
           ),
-          h('div', { className: 'dsh-git-modal-body' }, body),
+          h('div', { className: 'git-panel-modal-body' }, body),
         ),
       )
     }
@@ -1047,7 +1047,7 @@ window.__ModuleLoader__.load({
      *
      * The Plugins page renders a bundle's own configuration on that bundle's
      * page, keyed by the package name, between its description and its rows — so
-     * this is what opening `sidebar-git` in the installed group shows. The body
+     * this is what opening `GitPanel` in the installed group shows. The body
      * is the shared settings form: it stages what the user types and writes it
      * only on save, which is the page's own contract — the plugin never commits
      * a value the user did not confirm.
@@ -1073,7 +1073,7 @@ window.__ModuleLoader__.load({
           onDiscard: props.discard,
         },
         h(primitives.SettingsValueField, {
-          id: 'sidebar-git-discovery-depth',
+          id: 'GitPanel-discovery-depth',
           label: t('depth'),
           hint: t('depth.hint'),
           overriddenLabel: t('settings.overridden'),
@@ -1540,21 +1540,21 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'dsh-git' },
+        { className: 'git-panel' },
         h(StyleTag, null),
         h(
           'div',
-          { className: 'dsh-git-bar' },
+          { className: 'git-panel-bar' },
           h(
             'div',
-            { className: 'dsh-git-bar-row' },
+            { className: 'git-panel-bar-row' },
             h(
               'div',
-              { className: 'dsh-git-field' },
-              h('span', { className: 'dsh-git-field-label' }, t('workspace')),
+              { className: 'git-panel-field' },
+              h('span', { className: 'git-panel-field-label' }, t('workspace')),
               h(
                 'select',
-                { className: 'dsh-git-select', value: workspaceRoot ?? '', title: workspaceRoot ?? '', onChange: (event) => setWorkspaceOverride(event.target.value) },
+                { className: 'git-panel-select', value: workspaceRoot ?? '', title: workspaceRoot ?? '', onChange: (event) => setWorkspaceOverride(event.target.value) },
                 roots.map((entry) => h('option', { key: entry.path, value: entry.path }, entry.path)),
               ),
             ),
@@ -1562,33 +1562,33 @@ window.__ModuleLoader__.load({
               ? null
               : h(
                   'div',
-                  { className: 'dsh-git-field' },
-                  h('span', { className: 'dsh-git-field-label' }, t('repository')),
+                  { className: 'git-panel-field' },
+                  h('span', { className: 'git-panel-field-label' }, t('repository')),
                   h(
                     'select',
-                    { className: 'dsh-git-select', value: repository?.path ?? '', title: repository?.path ?? '', onChange: (event) => setRepoOverride(event.target.value) },
+                    { className: 'git-panel-select', value: repository?.path ?? '', title: repository?.path ?? '', onChange: (event) => setRepoOverride(event.target.value) },
                     currentRepositories.map((entry) =>
                       h('option', { key: entry.path, value: entry.path }, `${entry.relative === '' ? basename(entry.path) : entry.relative}${entry.isSubmodule ? ' (submodule)' : ''}`),
                     ),
                   ),
                 ),
-            h('span', { className: 'dsh-git-spacer' }),
-            loading ? h('span', { className: 'dsh-git-count' }, t('loading')) : null,
+            h('span', { className: 'git-panel-spacer' }),
+            loading ? h('span', { className: 'git-panel-count' }, t('loading')) : null,
             h(
               'span',
-              { className: 'dsh-git-branch-chip', title: state?.root ?? '' },
-              h('span', { className: 'dsh-git-branch-chip-glyph', 'aria-hidden': true }, h(GitGlyph, { size: 12 })),
-              h('span', { className: 'dsh-git-branch-chip-name' }, currentBranch ?? (state?.detached === true ? t('detached') : DASH)),
+              { className: 'git-panel-branch-chip', title: state?.root ?? '' },
+              h('span', { className: 'git-panel-branch-chip-glyph', 'aria-hidden': true }, h(GitGlyph, { size: 12 })),
+              h('span', { className: 'git-panel-branch-chip-name' }, currentBranch ?? (state?.detached === true ? t('detached') : DASH)),
             ),
             state === null || (state.ahead === 0 && state.behind === 0)
               ? null
-              : h('span', { className: 'dsh-git-chip', title: t('aheadBehind.title') }, `${UP}${state.ahead} ${DOWN}${state.behind}`),
-            h('button', { type: 'button', className: 'dsh-git-btn', disabled: busy, onClick: refresh, title: t('refresh') }, busy ? t('working') : t('refresh')),
+              : h('span', { className: 'git-panel-chip', title: t('aheadBehind.title') }, `${UP}${state.ahead} ${DOWN}${state.behind}`),
+            h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: refresh, title: t('refresh') }, busy ? t('working') : t('refresh')),
             h(
               'button',
               {
                 type: 'button',
-                className: cx('dsh-git-btn', 'dsh-git-btn-primary'),
+                className: cx('git-panel-btn', 'git-panel-btn-primary'),
                 disabled: busy || repository === null || currentBranch === null,
                 onClick: () => mutate('push', { remote: state?.remoteNames?.[0] }, t('notice.pushed')),
                 title: t('push'),
@@ -1597,30 +1597,30 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-        error === null ? null : h('div', { className: cx('dsh-git-banner', 'dsh-git-banner-error') }, error),
-        staleHost ? h('div', { className: cx('dsh-git-banner', 'dsh-git-banner-warn') }, t('notice.staleHost')) : null,
-        notice === null ? null : h('div', { className: cx('dsh-git-banner', 'dsh-git-banner-ok') }, notice),
+        error === null ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-error') }, error),
+        staleHost ? h('div', { className: cx('git-panel-banner', 'git-panel-banner-warn') }, t('notice.staleHost')) : null,
+        notice === null ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-ok') }, notice),
         roots.length === 0
-          ? h('div', { className: 'dsh-git-empty' }, t('noWorkspace'))
+          ? h('div', { className: 'git-panel-empty' }, t('noWorkspace'))
           : !workspaceReady
-            ? h('div', { className: 'dsh-git-empty' }, repositoriesLoaded && loading !== true ? t('noRepository') : t('loading'))
+            ? h('div', { className: 'git-panel-empty' }, repositoriesLoaded && loading !== true ? t('noRepository') : t('loading'))
             : h(
                 'div',
-                { className: 'dsh-git-cols' },
+                { className: 'git-panel-cols' },
                 // ---- left: branches, submodules, working tree ------------------
                 h(
                   'div',
-                  { className: cx('dsh-git-col', 'dsh-git-col-left') },
+                  { className: cx('git-panel-col', 'git-panel-col-left') },
                   h(
                     'div',
-                    { className: cx('dsh-git-pane', 'dsh-git-pane-top') },
-                    h('div', { className: 'dsh-git-pane-head' }, h('span', { className: 'dsh-git-pane-title' }, t('branches')), h('span', { className: 'dsh-git-count' }, String(branches.length + remotes.length))),
-                    h('div', { style: { padding: '5px 9px 3px' } }, h('input', { className: 'dsh-git-input', style: { width: '100%' }, value: branchFilter, placeholder: t('branchesFilter'), onChange: (event) => setBranchFilter(event.target.value) })),
+                    { className: cx('git-panel-pane', 'git-panel-pane-top') },
+                    h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('branches')), h('span', { className: 'git-panel-count' }, String(branches.length + remotes.length))),
+                    h('div', { style: { padding: '5px 9px 3px' } }, h('input', { className: 'git-panel-input', style: { width: '100%' }, value: branchFilter, placeholder: t('branchesFilter'), onChange: (event) => setBranchFilter(event.target.value) })),
                     h(
                       'div',
-                      { className: 'dsh-git-list' },
+                      { className: 'git-panel-list' },
                       h(GroupHead, { label: t('local'), count: branches.length, open: groups.local, onToggle: () => setGroups((value) => ({ ...value, local: !value.local })) }),
-                      groups.local && filteredBranches.length === 0 ? h('div', { className: 'dsh-git-empty' }, t('noBranches')) : null,
+                      groups.local && filteredBranches.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noBranches')) : null,
                       groups.local
                         ? filteredBranches.map((branch) =>
                             h(BranchRow, {
@@ -1652,30 +1652,30 @@ window.__ModuleLoader__.load({
                       (groups.submodules ? state?.submodules ?? [] : []).map((submodule) =>
                         h(
                           'div',
-                          { key: submodule.path, className: 'dsh-git-row', title: `${submodule.path} · ${submoduleStateText(submodule.state, t)}` },
-                          h('span', { className: cx('dsh-git-status', submodule.state === 'initialized' ? 'dsh-git-status-A' : 'dsh-git-status-M') }, submodule.state === 'initialized' ? CHECK_GLYPH : WARN_GLYPH),
-                          h('span', { className: 'dsh-git-branch' }, submodule.path),
-                          h('span', { className: 'dsh-git-count' }, submoduleStateText(submodule.state, t)),
+                          { key: submodule.path, className: 'git-panel-row', title: `${submodule.path} · ${submoduleStateText(submodule.state, t)}` },
+                          h('span', { className: cx('git-panel-status', submodule.state === 'initialized' ? 'git-panel-status-A' : 'git-panel-status-M') }, submodule.state === 'initialized' ? CHECK_GLYPH : WARN_GLYPH),
+                          h('span', { className: 'git-panel-branch' }, submodule.path),
+                          h('span', { className: 'git-panel-count' }, submoduleStateText(submodule.state, t)),
                         ),
                       ),
                     ),
                   ),
                   h(
                     'div',
-                    { className: cx('dsh-git-pane', 'dsh-git-pane-grow') },
+                    { className: cx('git-panel-pane', 'git-panel-pane-grow') },
                     h(
                       'div',
-                      { className: 'dsh-git-pane-head' },
-                      h('span', { className: 'dsh-git-pane-title' }, t('changes')),
-                      h('span', { className: 'dsh-git-count' }, String(files.length)),
-                      h('span', { className: 'dsh-git-spacer' }),
-                      h('button', { type: 'button', className: 'dsh-git-btn', disabled: busy || files.length === 0, onClick: () => mutate('stage', {}, t('notice.stagedAll')) }, t('stageAll')),
-                      h('button', { type: 'button', className: 'dsh-git-btn', disabled: busy || files.every((file) => file.staged !== true), onClick: () => mutate('unstage', {}, t('notice.unstagedAll')) }, t('unstageAll')),
+                      { className: 'git-panel-pane-head' },
+                      h('span', { className: 'git-panel-pane-title' }, t('changes')),
+                      h('span', { className: 'git-panel-count' }, String(files.length)),
+                      h('span', { className: 'git-panel-spacer' }),
+                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || files.length === 0, onClick: () => mutate('stage', {}, t('notice.stagedAll')) }, t('stageAll')),
+                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || files.every((file) => file.staged !== true), onClick: () => mutate('unstage', {}, t('notice.unstagedAll')) }, t('unstageAll')),
                     ),
                     h(
                       'div',
-                      { className: 'dsh-git-list' },
-                      files.length === 0 ? h('div', { className: 'dsh-git-empty' }, t('noChanges')) : null,
+                      { className: 'git-panel-list' },
+                      files.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noChanges')) : null,
                       files.map((file) =>
                         h(ChangeRow, {
                           t,
@@ -1711,9 +1711,9 @@ window.__ModuleLoader__.load({
                     ),
                     h(
                       'div',
-                      { className: 'dsh-git-msg' },
+                      { className: 'git-panel-msg' },
                       h('textarea', {
-                        className: 'dsh-git-textarea',
+                        className: 'git-panel-textarea',
                         value: message,
                         placeholder: t('messagePlaceholder'),
                         'aria-label': t('message'),
@@ -1727,10 +1727,10 @@ window.__ModuleLoader__.load({
                       }),
                       h(
                         'div',
-                        { className: 'dsh-git-actions' },
-                        h('button', { type: 'button', className: cx('dsh-git-btn', 'dsh-git-btn-primary'), disabled: busy || message.trim() === '', onClick: () => commit(false, false) }, t('commit')),
-                        h('button', { type: 'button', className: 'dsh-git-btn', disabled: busy || message.trim() === '', onClick: () => commit(true, false) }, t('commitAll')),
-                        h('button', { type: 'button', className: 'dsh-git-btn', disabled: busy || message.trim() === '', onClick: () => commit(false, true) }, t('commitPush')),
+                        { className: 'git-panel-actions' },
+                        h('button', { type: 'button', className: cx('git-panel-btn', 'git-panel-btn-primary'), disabled: busy || message.trim() === '', onClick: () => commit(false, false) }, t('commit')),
+                        h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(true, false) }, t('commitAll')),
+                        h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(false, true) }, t('commitPush')),
                       ),
                     ),
                   ),
@@ -1738,12 +1738,12 @@ window.__ModuleLoader__.load({
                 // ---- middle: history ------------------------------------------
                 h(
                   'div',
-                  { className: cx('dsh-git-col', 'dsh-git-col-mid') },
-                  h('div', { className: 'dsh-git-pane-head' }, h('span', { className: 'dsh-git-pane-title' }, t('commits')), h('span', { className: 'dsh-git-count' }, String(commits.length))),
+                  { className: cx('git-panel-col', 'git-panel-col-mid') },
+                  h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('commits')), h('span', { className: 'git-panel-count' }, String(commits.length))),
                   h(
                     'div',
-                    { className: 'dsh-git-list' },
-                    commits.length === 0 ? h('div', { className: 'dsh-git-empty' }, t('noCommits')) : null,
+                    { className: 'git-panel-list' },
+                    commits.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noCommits')) : null,
                     commits.map((commit) =>
                       h(CommitRow, {
                         t,
@@ -1762,73 +1762,73 @@ window.__ModuleLoader__.load({
                 // ---- right: the commit message above, its files below ---------
                 h(
                   'div',
-                  { className: cx('dsh-git-col', 'dsh-git-col-right') },
+                  { className: cx('git-panel-col', 'git-panel-col-right') },
                   selectedCommit === null
                     ? h(
                         React.Fragment,
                         null,
-                        h('div', { className: 'dsh-git-pane-head' }, h('span', { className: 'dsh-git-pane-title' }, t('details'))),
-                        h('div', { className: 'dsh-git-empty' }, t('selectCommit')),
+                        h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('details'))),
+                        h('div', { className: 'git-panel-empty' }, t('selectCommit')),
                       )
                     : h(
                         React.Fragment,
                         null,
                         h(
                           'div',
-                          { className: 'dsh-git-detail' },
+                          { className: 'git-panel-detail' },
                           h(
                             'div',
                             {
-                              className: 'dsh-git-detail-head',
+                              className: 'git-panel-detail-head',
                               title: t('menu.editMessage'),
                               onContextMenu: (event) => {
                                 event.preventDefault()
                                 setMenu({ x: event.clientX, y: event.clientY, title: `${selectedCommit.short} ${selectedCommit.subject}`, items: commitMessageMenu(selectedCommit) })
                               },
                             },
-                            h('div', { className: 'dsh-git-detail-subject' }, selectedCommit.subject || t('noMessage')),
+                            h('div', { className: 'git-panel-detail-subject' }, selectedCommit.subject || t('noMessage')),
                             h(
                               'div',
-                              { className: 'dsh-git-kv' },
-                              h('div', { className: 'dsh-git-kv-key' }, t('hash')),
-                              h('div', { className: cx('dsh-git-kv-value', 'dsh-git-mono') }, selectedCommit.hash),
-                              h('div', { className: 'dsh-git-kv-key' }, t('author')),
-                              h('div', { className: 'dsh-git-kv-value' }, `${selectedCommit.author} <${selectedCommit.email}>`),
-                              h('div', { className: 'dsh-git-kv-key' }, t('date')),
-                              h('div', { className: 'dsh-git-kv-value' }, absoluteDate(selectedCommit.timestamp)),
-                              h('div', { className: 'dsh-git-kv-key' }, t('parents')),
-                              h('div', { className: cx('dsh-git-kv-value', 'dsh-git-mono') }, selectedCommit.parents.map((parent) => parent.slice(0, 8)).join(' ') || DASH),
+                              { className: 'git-panel-kv' },
+                              h('div', { className: 'git-panel-kv-key' }, t('hash')),
+                              h('div', { className: cx('git-panel-kv-value', 'git-panel-mono') }, selectedCommit.hash),
+                              h('div', { className: 'git-panel-kv-key' }, t('author')),
+                              h('div', { className: 'git-panel-kv-value' }, `${selectedCommit.author} <${selectedCommit.email}>`),
+                              h('div', { className: 'git-panel-kv-key' }, t('date')),
+                              h('div', { className: 'git-panel-kv-value' }, absoluteDate(selectedCommit.timestamp)),
+                              h('div', { className: 'git-panel-kv-key' }, t('parents')),
+                              h('div', { className: cx('git-panel-kv-value', 'git-panel-mono') }, selectedCommit.parents.map((parent) => parent.slice(0, 8)).join(' ') || DASH),
                             ),
-                            selectedCommit.body === '' ? null : h('div', { className: 'dsh-git-detail-body' }, selectedCommit.body),
+                            selectedCommit.body === '' ? null : h('div', { className: 'git-panel-detail-body' }, selectedCommit.body),
                           ),
                           h(
                             'div',
-                            { className: 'dsh-git-pane-head' },
-                            h('span', { className: 'dsh-git-pane-title' }, t('files')),
-                            h('span', { className: 'dsh-git-count' }, filesLoading ? t('loading') : String(commitFiles.length)),
+                            { className: 'git-panel-pane-head' },
+                            h('span', { className: 'git-panel-pane-title' }, t('files')),
+                            h('span', { className: 'git-panel-count' }, filesLoading ? t('loading') : String(commitFiles.length)),
                           ),
                           h(
                             'div',
-                            { className: 'dsh-git-list' },
-                            filesError === null ? null : h('div', { className: 'dsh-git-empty' }, filesError),
-                            filesError !== null || commitFiles.length > 0 ? null : h('div', { className: 'dsh-git-empty' }, filesLoading ? t('files.loading') : t('files.none')),
+                            { className: 'git-panel-list' },
+                            filesError === null ? null : h('div', { className: 'git-panel-empty' }, filesError),
+                            filesError !== null || commitFiles.length > 0 ? null : h('div', { className: 'git-panel-empty' }, filesLoading ? t('files.loading') : t('files.none')),
                             commitFiles.map((file) =>
                               h(
                                 'div',
                                 {
                                   key: file.path,
-                                  className: cx('dsh-git-row', selectedFile?.path === file.path ? 'dsh-git-row-sel' : false),
+                                  className: cx('git-panel-row', selectedFile?.path === file.path ? 'git-panel-row-sel' : false),
                                   title: `${file.path} — ${t('openDiff')}`,
                                   onClick: () => setSelectedFile({ path: file.path, staged: false }),
                                   onDoubleClick: () => openDiff({ path: file.path, staged: false }),
                                 },
-                                h('span', { className: 'dsh-git-status', style: { opacity: 0.5 } }, DOT_GLYPH),
-                                h('span', { className: 'dsh-git-branch' }, file.path),
+                                h('span', { className: 'git-panel-status', style: { opacity: 0.5 } }, DOT_GLYPH),
+                                h('span', { className: 'git-panel-branch' }, file.path),
                                 h(
                                   'span',
-                                  { className: 'dsh-git-numstat' },
-                                  file.added === null ? h('span', { className: 'dsh-git-sub' }, t('file.binary')) : file.added > 0 ? h('span', { className: 'dsh-git-plus' }, `+${file.added}`) : null,
-                                  file.removed === null || file.removed === 0 ? null : h('span', { className: 'dsh-git-minus' }, `-${file.removed}`),
+                                  { className: 'git-panel-numstat' },
+                                  file.added === null ? h('span', { className: 'git-panel-sub' }, t('file.binary')) : file.added > 0 ? h('span', { className: 'git-panel-plus' }, `+${file.added}`) : null,
+                                  file.removed === null || file.removed === 0 ? null : h('span', { className: 'git-panel-minus' }, `-${file.removed}`),
                                 ),
                               ),
                             ),
@@ -1914,23 +1914,23 @@ window.__ModuleLoader__.load({
       if (closed) return null
       return h(
         'div',
-        { className: 'dsh-git' },
+        { className: 'git-panel' },
         h(StyleTag, null),
         h(
           'div',
-          { className: 'dsh-git-launch' },
-          h('div', { className: 'dsh-git-launch-icon' }, h(GitGlyph, { size: 28 })),
-          h('div', { className: 'dsh-git-launch-title' }, t('title')),
-          h('div', { className: 'dsh-git-launch-text' }, t('launcherHint')),
-          h('div', { className: 'dsh-git-launch-text' }, t('launcherWhere')),
+          { className: 'git-panel-launch' },
+          h('div', { className: 'git-panel-launch-icon' }, h(GitGlyph, { size: 28 })),
+          h('div', { className: 'git-panel-launch-title' }, t('title')),
+          h('div', { className: 'git-panel-launch-text' }, t('launcherHint')),
+          h('div', { className: 'git-panel-launch-text' }, t('launcherWhere')),
           h(
             'div',
-            { className: 'dsh-git-launch-actions' },
+            { className: 'git-panel-launch-actions' },
             h(
               'button',
               {
                 type: 'button',
-                className: cx('dsh-git-btn', 'dsh-git-btn-primary'),
+                className: cx('git-panel-btn', 'git-panel-btn-primary'),
                 onClick: () => {
                   if (openGitPanel(info) === true) setClosed(closeOwnTab(info))
                 },
@@ -1969,7 +1969,7 @@ window.__ModuleLoader__.load({
       hostContext = ctx
       const t = ctx.locale.bind(LOCALE_NS)
       boundTranslate = t
-      ctx.effect(() => ctx.locale.register(LOCALE_NS, { en, zh }), 'ui-sidebar-git: dictionaries')
+      ctx.effect(() => ctx.locale.register(LOCALE_NS, { en, zh }), 'ui-GitPanel: dictionaries')
       try {
         primitives = require('@deepseek-ai/dsh-client-ui-primitives')
       } catch {
@@ -1977,12 +1977,12 @@ window.__ModuleLoader__.load({
       }
       ctx.effect(
         () => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: LOCALE_NS }, GitPanel)),
-        'ui-sidebar-git: git main panel',
+        'ui-GitPanel: git main panel',
       )
 
       ctx.effect(
         () => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 40, label: () => t('title') }, GitGlyph)),
-        'ui-sidebar-git: git panel entry',
+        'ui-GitPanel: git panel entry',
       )
 
       ctx.effect(
@@ -1995,17 +1995,17 @@ window.__ModuleLoader__.load({
             title: () => t('title'),
             guide: [{ id: 'git', order: 20, title: () => t('title'), description: () => t('launcherHint'), icon: GitGlyph }],
           }),
-        'ui-sidebar-git: git type',
+        'ui-GitPanel: git type',
       )
 
       ctx.effect(
         () => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: PLUGIN_ID, locale: LOCALE_NS }, GitTabDoor)),
-        'ui-sidebar-git: git tab door',
+        'ui-GitPanel: git tab door',
       )
 
       ctx.effect(
         () => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: PLUGIN_ID, locale: LOCALE_NS }, GitTitle)),
-        'ui-sidebar-git: git tab title',
+        'ui-GitPanel: git tab title',
       )
 
       // The Plugins page renders a bundle's own configuration on that bundle's
@@ -2014,7 +2014,7 @@ window.__ModuleLoader__.load({
       // and a third-party bundle never claims a cell in the official group.
       if (primitives !== null && typeof ctx.configForms?.whileServed === 'function') {
         const card = createSettingsCard(ctx.configForms)
-        ctx.effect(() => () => card.dispose(), 'ui-sidebar-git: settings form subscription')
+        ctx.effect(() => () => card.dispose(), 'ui-GitPanel: settings form subscription')
         ctx.effect(
           () =>
             ctx.configForms.whileServed([SETTINGS_NS], () =>
@@ -2030,7 +2030,7 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-          'ui-sidebar-git: settings card',
+          'ui-GitPanel: settings card',
         )
       }
     }

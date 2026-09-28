@@ -1,5 +1,5 @@
 {
-  "name": "sidebar-git",
+  "name": "GitPanel",
   "version": "0.2.0",
   "private": true,
   "description": "IntelliJ-style Git manager for the DSH web client: multi-repository discovery with submodules, branches, changes, commits and remotes in a full-page three-column panel",
