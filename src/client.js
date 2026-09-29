@@ -30,6 +30,12 @@ window.__ModuleLoader__.load({
     /** The authenticated Host route every operation is posted to. */
     const ROUTE = '/api/local-git'
 
+    // The package revision that every chunk URL carries is derived from THIS
+    // file (its mtime, ctime, and size), not from the chunks themselves. Editing
+    // only a `client.*.js` chunk therefore leaves every URL unchanged and the
+    // browser keeps serving the previous chunk out of its immutable cache until
+    // the user hard-refreshes; editing the entry is what retires that cache.
+
     /** Commit page size requested from the Host. */
     const COMMIT_PAGE = 200
 

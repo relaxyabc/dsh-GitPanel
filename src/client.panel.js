@@ -626,7 +626,7 @@ window.__ModuleLoader__.load({
             }),
         }
         const rebaseItem = {
-          label: fill(t('menu.rebase'), { name: branch.name }),
+          label: fill(t('menu.rebase'), { name: currentBranch ?? 'HEAD' }),
           disabled: branch.current === true,
           run: () =>
             setDialog({

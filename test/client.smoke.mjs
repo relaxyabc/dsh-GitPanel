@@ -656,15 +656,39 @@ check(
   localeState.ns?.dicts?.zh?.['amendBox'],
 )
 check(
-  localeState.ns?.dicts?.en?.['menu.merge'] === 'Merge into {name}' && localeState.ns?.dicts?.zh?.['menu.merge'] === '合并到 {name}',
-  'the branch merge menu entry is registered in both languages',
+  localeState.ns?.dicts?.en?.['menu.merge'] === 'Merge into {name}' && localeState.ns?.dicts?.zh?.['menu.merge'] === 'Merge into {name}',
+  'the branch merge menu entry keeps its verb in both languages',
   { en: localeState.ns?.dicts?.en?.['menu.merge'], zh: localeState.ns?.dicts?.zh?.['menu.merge'] },
 )
 check(
   localeState.ns?.dicts?.en?.['mergeInProgress']?.startsWith('Merge in progress') === true &&
-    localeState.ns?.dicts?.zh?.['mergeInProgress']?.startsWith('合并进行中') === true,
-  'the stopped-merge banner copy is registered in both languages',
+    localeState.ns?.dicts?.zh?.['mergeInProgress']?.startsWith('Merge 进行中') === true,
+  'the stopped-merge banner names the verb in both languages',
   { en: localeState.ns?.dicts?.en?.['mergeInProgress'], zh: localeState.ns?.dicts?.zh?.['mergeInProgress'] },
+)
+// Git's own verbs stay untranslated in both dictionaries: a Chinese menu that
+// says 摘取 / 重置 / 还原 cannot be matched against the command a user already
+// knows, so only the orientation around the verb is localised.
+// The commands a menu names stay untranslated in the Chinese dictionary: 摘取 /
+// 重置 / 还原 cannot be matched against the command the user already knows.
+check(
+  ['checkout', 'cherryPick', 'resetSoft', 'resetMixed', 'resetHard', 'revert', 'newBranch', 'amendCommit', 'amendCommitAll'].every(
+    (key) => localeState.ns?.dicts?.zh?.[key] === localeState.ns?.dicts?.en?.[key],
+  ),
+  'the Chinese dictionary keeps the Git command names the menus use',
+  { zh: localeState.ns?.dicts?.zh?.cherryPick, en: localeState.ns?.dicts?.en?.cherryPick },
+)
+// The banner buttons name the exact Git invocation instead, because that is what
+// the user reaches for when a stopped rebase has to be unwound by hand.
+check(
+  localeState.ns?.dicts?.zh?.['rebaseAbort'] === 'Rebase --abort' && localeState.ns?.dicts?.zh?.['rebaseContinue'] === 'Rebase --continue',
+  'the Chinese banner buttons name the Git invocation',
+  { abort: localeState.ns?.dicts?.zh?.['rebaseAbort'], continue: localeState.ns?.dicts?.zh?.['rebaseContinue'] },
+)
+check(
+  localeState.ns?.dicts?.zh?.['menu.rebase'] === 'Rebase {name} onto this branch' && localeState.ns?.dicts?.zh?.['menu.merge'] === 'Merge into {name}',
+  'the merge and rebase menu entries keep their verbs in both languages',
+  { merge: localeState.ns?.dicts?.zh?.['menu.merge'], rebase: localeState.ns?.dicts?.zh?.['menu.rebase'] },
 )
 check(
   localeState.ns?.dicts?.zh?.['amend'] === '修改提交信息' && localeState.ns?.dicts?.zh?.['menu.editMessage'] === '修改提交信息',
@@ -1398,7 +1422,7 @@ freshBranchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, 
 view = await settle(view)
 const branchMenuText = view.text()
 check(branchMenuText.includes('Merge into main'), 'the branch menu offers merging into the current branch', branchMenuText.slice(-24))
-check(branchMenuText.includes('Rebase fix/rename-docs onto this'), 'the branch menu offers rebasing onto another branch', branchMenuText.slice(-30))
+check(branchMenuText.includes('Rebase main onto this branch'), 'the branch menu offers rebasing the current branch onto another one', branchMenuText.slice(-30))
 const mergeMenuItem = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Merge into main')
 check(mergeMenuItem !== undefined && mergeMenuItem.props?.disabled !== true, 'a non-current branch can be merged', mergeMenuItem?.props)
 mergeMenuItem?.props?.onClick?.()
@@ -1425,7 +1449,7 @@ const rebaseBranchRow = find(
 )
 rebaseBranchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
 view = await settle(view)
-find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rebase fix/rename-docs onto this')?.props?.onClick?.()
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rebase main onto this branch')?.props?.onClick?.()
 view = await settle(view)
 // `view.text()` is the list of rendered strings, so a substring lives in the
 // joined page rather than in any single entry.

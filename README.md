@@ -61,15 +61,15 @@
 
 **分支**
 - 本地 / 远程分组、可折叠、可按名称过滤;当前分支带 `HEAD` 标记,显示上游与最新提交说明。
-- 右键或双击:切换分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交新建分支。
-- 分支右键菜单可**合并 / 变基**:「Merge into <当前分支>」把该分支并入当前分支(合并提交的信息在对话框里预填,可直接编辑);「Rebase <what> onto this」把当前分支重放到该分支上。二者都先弹确认框(说明工作区必须干净、变基会重写提交),**冲突**时 Git 停下来,面板显示黄色横幅提示,并给出「Complete merge / Abort merge」(合并)或「Continue rebase / Abort rebase」(变基)按钮;冲突文件与普通改动一样列在工作区里,解决后 stage 即可。
+- 右键或双击:Checkout 分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交 New branch from here。
+- 分支右键菜单的 **Merge into <当前分支>** 把该分支并入当前分支(合并提交的信息在对话框里预填,可直接编辑),**Rebase <当前分支> onto this branch** 把当前分支重放到该分支上。二者都先弹确认框(说明工作区必须干净、rebase 会重写提交),**冲突**时 Git 停下来,面板显示黄色横幅,并给出分支里实际执行的命令按钮:**Commit merge** / **Merge --abort**,或 **Rebase --continue** / **Rebase --abort**;冲突文件与普通改动一样列在工作区里,解决后 stage 即可。
 
 **提交历史与 diff**
 - 每页最多 200 条(作者、相对时间、ref 装饰);每提交的文件统计在**选中该提交时**才单独读取,历史列表始终是一次轻量调用。
 - 选中提交后右栏显示完整信息(哈希、作者、日期、父提交、正文;可改写最新提交的信息)与该提交的文件列表。
 - 双击文件弹出**左右双栏 diff**(两侧行号、替换行同排对照;二进制与无差异分别提示);未跟踪文件也能给出内容 diff。
 - diff 弹窗自带两条**改动导航**:左侧改动列表(逐条 + 上一处/下一处),右侧概览条(按位置比例高亮、显示可见范围、点击跳转);开启 `wholeFileDiff` 后两栏改为整文件对照。
-- 提交右键菜单:复制哈希、Amend(仅最新提交)、Checkout、Cherry-pick、从该提交建分支、Reset(soft/mixed/hard)、Revert。
+- 提交右键菜单:Copy hash、Amend message(仅最新提交)、Checkout、Cherry-pick、New branch from here、Reset (soft/mixed/hard)、Revert commit。
 
 **工作区改动与提交**
 - 基于 `git status --porcelain=v2 -z` 的改动列表:状态字母 + 每文件 +/− 行数,二进制标注。
@@ -85,6 +85,7 @@
 
 **界面与语言**
 - 中英双语:面板内全部文案(含 guide 条目、菜单、对话框、提示)经 DSH locale 服务输出,跟随客户端语言设置实时切换;插件卡片上的包名与描述来自 `locale/{en,zh}.json`。
+- **git 命令名不翻译**:菜单里的 `Checkout` / `Cherry-pick` / `Reset (soft|mixed|hard)` / `Revert commit` / `Merge` / `Rebase` 在中英文界面下都是这几个词(横幅按钮另按实际调用写作 `Merge --abort` / `Rebase --continue`),`Amend` 也一直保持英文。中文只用在它们的**方位与解释**上,例如中文界面下的分支菜单是「Merge into main」「Rebase main onto this branch」。
 - 全部样式为内联设计令牌(`--dsw-alias-*` + 字面回退值),自动适配明暗主题。
 
 ## 3. 架构与目录结构
@@ -123,13 +124,13 @@ POST /api/local-git
 | `stage` / `unstage` | 写 | 暂存 / 取消暂存指定路径或全部 |
 | `commit` | 写 | 创建提交(`--all` / `--amend`) |
 | `push` / `fetch` / `pull` | 写 | 推送 / 只下载对象与远程跟踪引用 / 把上游整合进工作区 |
-| `checkout` | 写 | 切换分支、检出提交,可顺带新建分支 |
+| `checkout` | 写 | checkout 分支或提交,可顺带新建分支 |
 | `deleteBranch` | 写 | 删除本地分支(默认安全删除) |
-| `reset` / `cherryPick` / `revert` | 写 | soft/mixed/hard 重置 / 摘取提交 / 用新提交还原 |
+| `reset` / `cherryPick` / `revert` | 写 | reset --soft/--mixed/--hard / cherry-pick 一个提交 / 用新提交 revert |
 | `amend` | 写 | 改写最新提交的信息 |
 | `merge` | 写 | 把指定分支并入当前分支(`--no-ff` / `--ff-only` / `--squash` / `--no-commit`;会提交时必须带信息) |
 | `rebase` | 写 | 把当前分支重放到指定分支上(可 `--interactive` / `--autostash`) |
-| `mergeAbort` / `rebaseAbort` / `rebaseContinue` | 写 | 解冲突期间的收尾:撤销合并 / 撤销变基 / 解决后继续变基 |
+| `mergeAbort` / `rebaseAbort` / `rebaseContinue` | 写 | 解冲突期间的收尾:`merge --abort` / `rebase --abort` / `rebase --continue` |
 | `submodule` | 写 | 子模块 init / update / sync |
 
 参数与语义以 `index.js` 的 `READ_OPERATIONS` / `WRITE_OPERATIONS` 为准(两者合起来就是上表)。
