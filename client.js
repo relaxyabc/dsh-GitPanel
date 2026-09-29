@@ -391,10 +391,11 @@ window.__ModuleLoader__.load({
       // vocabulary, a chunk destructures exactly what it uses, and no chunk can
       // reach back into the entry for something that was never given to it.
       const shared = {
-        // Runtime and language.
+        // Runtime and language. The components take their `t` as a prop — the
+        // framework injects it into a slot occupant — so the chunks need the
+        // pre-bound fallback rather than the namespace binding itself.
         h,
         React,
-        t,
         boundTranslate,
         primitives,
         // Render surfaces the entry owns: the stylesheet tag and the Git glyph.
@@ -458,13 +459,15 @@ window.__ModuleLoader__.load({
       // Every other chunk is requested here, before a single seat is registered:
       // the panel, the settings card, and the tab door are all handed to the
       // framework in this call, so nothing they render may still be waiting.
-      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, panelFace] = await Promise.all([
+      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, branchesFace, historyFace, panelFace] = await Promise.all([
         require.async('./client.i18n.js'),
         require.async('./client.style.js'),
         require.async('./client.settings.js'),
         require.async('./client.sidebar.js'),
         require.async('./client.rows.js'),
         require.async('./client.diff.js'),
+        require.async('./client.branches.js'),
+        require.async('./client.history.js'),
         require.async('./client.panel.js'),
       ])
       dictionaries = i18n
@@ -474,9 +477,11 @@ window.__ModuleLoader__.load({
       const { GitTabDoor, GitTitle } = sidebarFace.create(shared)
       const rows = rowsFace.create(shared)
       const diff = diffFace.create(shared)
-      // The panel is the one component that renders what the chunks above build,
-      // so it is wired last and handed the rows and the modal by name.
-      const { GitPanel } = panelFace.create({ ...shared, rows, diff })
+      // The columns and the panel render the rows, so they are wired with them;
+      // everything else keeps the narrower scope it was created from.
+      const wired = { ...shared, rows, diff }
+      const panes = { ...branchesFace.create(wired), ...historyFace.create(wired) }
+      const { GitPanel } = panelFace.create({ ...wired, panes })
       ctx.effect(() => ctx.locale.register(LOCALE_NS, dictionaries), 'ui-GitPanel: dictionaries')
       ctx.effect(
         () => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: LOCALE_NS }, GitPanel)),

@@ -15,10 +15,10 @@ window.__ModuleLoader__.load({
   factory: () => ({ create: (shared) => {
     const {
       h, React, boundTranslate, cx, basename, fill, callHost, failureText, isStaleHost,
-      submoduleStateText, mainSessionIdOf, absoluteDate, GitGlyph, StyleTag,
-      CHECK_GLYPH, WARN_GLYPH, DOT_GLYPH, DASH, UP, DOWN, COMMIT_PAGE, NO_FILES,
-      rows: { ContextMenu, Dialog, ChangeRow, BranchRow, CommitRow, GroupHead },
+      mainSessionIdOf, GitGlyph, StyleTag, DASH, UP, DOWN, COMMIT_PAGE, NO_FILES,
+      rows: { ContextMenu, Dialog },
       diff: { DiffModal },
+      panes: { BranchesColumn, HistoryColumn, CommitColumn },
     } = shared
 
     /**
@@ -663,251 +663,23 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'git-panel-cols' },
                 // ---- left: branches, submodules, working tree ------------------
-                h(
-                  'div',
-                  { className: cx('git-panel-col', 'git-panel-col-left') },
-                  h(
-                    'div',
-                    { className: cx('git-panel-pane', 'git-panel-pane-top') },
-                    h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('branches')), h('span', { className: 'git-panel-count' }, String(branches.length + remotes.length))),
-                    h('div', { style: { padding: '5px 9px 3px' } }, h('input', { className: 'git-panel-input', style: { width: '100%' }, value: branchFilter, placeholder: t('branchesFilter'), onChange: (event) => setBranchFilter(event.target.value) })),
-                    h(
-                      'div',
-                      { className: 'git-panel-list' },
-                      h(GroupHead, { label: t('local'), count: branches.length, open: groups.local, onToggle: () => setGroups((value) => ({ ...value, local: !value.local })) }),
-                      groups.local && filteredBranches.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noBranches')) : null,
-                      groups.local
-                        ? filteredBranches.map((branch) =>
-                            h(BranchRow, {
-                              key: `l-${branch.name}`,
-                              branch,
-                              remote: false,
-                              busy,
-                              onCheckout: (request) => mutate('checkout', request, `switched to ${request.name}`),
-                              onContextMenu: (event, entry, isRemote) => setMenu({ x: event.clientX, y: event.clientY, title: entry.name, items: branchMenu(entry, isRemote) }),
-                            }),
-                          )
-                        : null,
-                      h(GroupHead, { label: t('remote'), count: remotes.length, open: groups.remote, onToggle: () => setGroups((value) => ({ ...value, remote: !value.remote })) }),
-                      groups.remote
-                        ? filteredRemotes.map((branch) =>
-                            h(BranchRow, {
-                              key: `r-${branch.name}`,
-                              branch,
-                              remote: true,
-                              busy,
-                              onCheckout: (request) => mutate('checkout', request, `checked out ${request.name}`),
-                              onContextMenu: (event, entry, isRemote) => setMenu({ x: event.clientX, y: event.clientY, title: entry.name, items: branchMenu(entry, isRemote) }),
-                            }),
-                          )
-                        : null,
-                      (state?.submodules?.length ?? 0) === 0
-                        ? null
-                        : h(GroupHead, { label: t('submodules'), count: state.submodules.length, open: groups.submodules, onToggle: () => setGroups((value) => ({ ...value, submodules: !value.submodules })) }),
-                      (groups.submodules ? state?.submodules ?? [] : []).map((submodule) =>
-                        h(
-                          'div',
-                          { key: submodule.path, className: 'git-panel-row', title: `${submodule.path} · ${submoduleStateText(submodule.state, t)}` },
-                          h('span', { className: cx('git-panel-status', submodule.state === 'initialized' ? 'git-panel-status-A' : 'git-panel-status-M') }, submodule.state === 'initialized' ? CHECK_GLYPH : WARN_GLYPH),
-                          h('span', { className: 'git-panel-branch' }, submodule.path),
-                          h('span', { className: 'git-panel-count' }, submoduleStateText(submodule.state, t)),
-                        ),
-                      ),
-                    ),
-                  ),
-                  h(
-                    'div',
-                    { className: cx('git-panel-pane', 'git-panel-pane-grow') },
-                    h(
-                      'div',
-                      { className: 'git-panel-pane-head' },
-                      h('input', {
-                        type: 'checkbox',
-                        className: 'git-panel-check',
-                        checked: files.length > 0 && pickedPaths.length === files.length,
-                        disabled: busy || files.length === 0,
-                        title: t('selectAll'),
-                        'aria-label': t('selectAll'),
-                        // A DOM property, not an attribute: React cannot set it
-                        // from props, and a partial selection must render the
-                        // dash rather than a checked box.
-                        ref: (element) => {
-                          if (element === null || element === undefined) return
-                          element.indeterminate = pickedPaths.length > 0 && pickedPaths.length < files.length
-                        },
-                        onChange: () => selectEverything(pickedPaths.length !== files.length),
-                      }),
-                      h('span', { className: 'git-panel-pane-title' }, t('changes')),
-                      h('span', { className: 'git-panel-count' }, String(files.length)),
-                      h('span', { className: 'git-panel-spacer' }),
-                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || pickedPaths.length === 0, title: t('stageSelected.hint'), onClick: () => setSelectedStaged(true) }, t('stageSelected')),
-                      h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || pickedPaths.length === 0, title: t('unstageSelected.hint'), onClick: () => setSelectedStaged(false) }, t('unstageSelected')),
-                    ),
-                    h(
-                      'div',
-                      { className: 'git-panel-list' },
-                      files.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noChanges')) : null,
-                      files.map((file) =>
-                        h(ChangeRow, {
-                          t,
-                          key: file.path,
-                          file,
-                          busy,
-                          selected: selectedCommit === null && selectedFile?.path === file.path,
-                          picked: selectedPaths.has(file.path),
-                          onToggle: (entry) => togglePicked(entry),
-                          onSelect: (entry) => {
-                            setSelectedCommit(null)
-                            setSelectedFile(entry)
-                          },
-                          onOpen: (entry) => {
-                            // A working-tree file is never read through a commit,
-                            // so a commit left selected must not supply the diff base.
-                            setSelectedCommit(null)
-                            openDiff(entry)
-                          },
-                          onContextMenu: (event, entry) =>
-                            setMenu({
-                              x: event.clientX,
-                              y: event.clientY,
-                              title: entry.path,
-                              items: [
-                                entry.staged === true ? { label: t('menu.unstage'), run: () => mutate('unstage', { paths: [entry.path] }, undefined, 'state') } : { label: t('menu.stage'), run: () => mutate('stage', { paths: [entry.path] }, undefined, 'state') },
-                                { separator: true },
-                                { label: t('menu.showDiff'), run: () => { setSelectedCommit(null); openDiff(entry) } },
-                                { label: t('copyHash'), run: () => copyText(entry.path) },
-                              ],
-                            }),
-                        }),
-                      ),
-                    ),
-                    h(
-                      'div',
-                      { className: 'git-panel-msg' },
-                      h('textarea', {
-                        className: 'git-panel-textarea',
-                        value: message,
-                        placeholder: t('messagePlaceholder'),
-                        'aria-label': t('message'),
-                        onChange: (event) => setMessage(event.target.value),
-                        onKeyDown: (event) => {
-                          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                            event.preventDefault()
-                            if (message.trim() !== '') commit(false, false)
-                          }
-                        },
-                      }),
-                      h(
-                        'div',
-                        { className: 'git-panel-actions' },
-                        h('button', { type: 'button', className: cx('git-panel-btn', 'git-panel-btn-primary'), disabled: busy || message.trim() === '', onClick: () => commit(false, false) }, t('commit')),
-                        h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(true, false) }, t('commitAll')),
-                        h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(false, true) }, t('commitPush')),
-                      ),
-                    ),
-                  ),
-                ),
+                h(BranchesColumn, {
+                  branchFilter, branchMenu, branches, busy, commit, copyText, diff, files,
+                  filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths,
+                  remotes, selectEverything, selectedCommit, selectedFile, selectedPaths,
+                  setBranchFilter, setGroups, setMenu, setMessage, setSelectedCommit,
+                  setSelectedFile, setSelectedStaged, state, t, togglePicked,
+                }),
                 // ---- middle: history ------------------------------------------
-                h(
-                  'div',
-                  { className: cx('git-panel-col', 'git-panel-col-mid') },
-                  h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('commits')), h('span', { className: 'git-panel-count' }, String(commits.length))),
-                  h(
-                    'div',
-                    { className: 'git-panel-list' },
-                    commits.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noCommits')) : null,
-                    commits.map((commit) =>
-                      h(CommitRow, {
-                        t,
-                        key: commit.hash,
-                        commit,
-                        selected: selectedCommit?.hash === commit.hash,
-                        onSelect: (entry) => {
-                          setSelectedCommit(entry)
-                          setSelectedFile(null)
-                        },
-                        onContextMenu: (event, entry) => setMenu({ x: event.clientX, y: event.clientY, title: `${entry.short} ${entry.subject}`, items: commitMenu(entry) }),
-                      }),
-                    ),
-                  ),
-                ),
+                h(HistoryColumn, {
+                  commitMenu, commits, selectedCommit, setMenu, setSelectedCommit, setSelectedFile,
+                  t,
+                }),
                 // ---- right: the commit message above, its files below ---------
-                h(
-                  'div',
-                  { className: cx('git-panel-col', 'git-panel-col-right') },
-                  selectedCommit === null
-                    ? h(
-                        React.Fragment,
-                        null,
-                        h('div', { className: 'git-panel-pane-head' }, h('span', { className: 'git-panel-pane-title' }, t('details'))),
-                        h('div', { className: 'git-panel-empty' }, t('selectCommit')),
-                      )
-                    : h(
-                        React.Fragment,
-                        null,
-                        h(
-                          'div',
-                          { className: 'git-panel-detail' },
-                          h(
-                            'div',
-                            {
-                              className: 'git-panel-detail-head',
-                              title: t('menu.editMessage'),
-                              onContextMenu: (event) => {
-                                event.preventDefault()
-                                setMenu({ x: event.clientX, y: event.clientY, title: `${selectedCommit.short} ${selectedCommit.subject}`, items: commitMessageMenu(selectedCommit) })
-                              },
-                            },
-                            h('div', { className: 'git-panel-detail-subject' }, selectedCommit.subject || t('noMessage')),
-                            h(
-                              'div',
-                              { className: 'git-panel-kv' },
-                              h('div', { className: 'git-panel-kv-key' }, t('hash')),
-                              h('div', { className: cx('git-panel-kv-value', 'git-panel-mono') }, selectedCommit.hash),
-                              h('div', { className: 'git-panel-kv-key' }, t('author')),
-                              h('div', { className: 'git-panel-kv-value' }, `${selectedCommit.author} <${selectedCommit.email}>`),
-                              h('div', { className: 'git-panel-kv-key' }, t('date')),
-                              h('div', { className: 'git-panel-kv-value' }, absoluteDate(selectedCommit.timestamp)),
-                              h('div', { className: 'git-panel-kv-key' }, t('parents')),
-                              h('div', { className: cx('git-panel-kv-value', 'git-panel-mono') }, selectedCommit.parents.map((parent) => parent.slice(0, 8)).join(' ') || DASH),
-                            ),
-                            selectedCommit.body === '' ? null : h('div', { className: 'git-panel-detail-body' }, selectedCommit.body),
-                          ),
-                          h(
-                            'div',
-                            { className: 'git-panel-pane-head' },
-                            h('span', { className: 'git-panel-pane-title' }, t('files')),
-                            h('span', { className: 'git-panel-count' }, filesLoading ? t('loading') : String(commitFiles.length)),
-                          ),
-                          h(
-                            'div',
-                            { className: 'git-panel-list' },
-                            filesError === null ? null : h('div', { className: 'git-panel-empty' }, filesError),
-                            filesError !== null || commitFiles.length > 0 ? null : h('div', { className: 'git-panel-empty' }, filesLoading ? t('files.loading') : t('files.none')),
-                            commitFiles.map((file) =>
-                              h(
-                                'div',
-                                {
-                                  key: file.path,
-                                  className: cx('git-panel-row', selectedFile?.path === file.path ? 'git-panel-row-sel' : false),
-                                  title: `${file.path} — ${t('openDiff')}`,
-                                  onClick: () => setSelectedFile({ path: file.path, staged: false }),
-                                  onDoubleClick: () => openDiff({ path: file.path, staged: false }),
-                                },
-                                h('span', { className: 'git-panel-status', style: { opacity: 0.5 } }, DOT_GLYPH),
-                                h('span', { className: 'git-panel-branch' }, file.path),
-                                h(
-                                  'span',
-                                  { className: 'git-panel-numstat' },
-                                  file.added === null ? h('span', { className: 'git-panel-sub' }, t('file.binary')) : file.added > 0 ? h('span', { className: 'git-panel-plus' }, `+${file.added}`) : null,
-                                  file.removed === null || file.removed === 0 ? null : h('span', { className: 'git-panel-minus' }, `-${file.removed}`),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                ),
+                h(CommitColumn, {
+                  commitFiles, commitMessageMenu, filesError, filesLoading, openDiff, selectedCommit,
+                  selectedFile, setMenu, setSelectedFile, t,
+                }),
               ),
         menu === null ? null : h(ContextMenu, { menu, onClose: closeMenu }),
         dialog === null ? null : h(Dialog, { dialog, onClose: () => setDialog(null), t }),

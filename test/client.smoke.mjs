@@ -8,6 +8,7 @@
  * commit's details and a file diff — and inspects the captured registrations.
  * It catches structural errors, not visual ones.
  */
+import { readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createModuleLoader } from './module-loader.mjs'
@@ -574,6 +575,19 @@ await clientModule.apply({
     },
   },
 })
+
+console.log('\nchunk graph')
+// Every package-local chunk has to be requested by the entry and register itself
+// under the package name: a file nobody loads is dead code, and one that registers
+// late or under another owner would surface only as a blank seat in the app.
+const chunkFiles = readdirSync(join(here, '..')).filter((name) => /^client\..+\.js$/.test(name)).sort()
+const requestedChunks = moduleLoader.registered().filter((key) => key !== 'client.js').sort()
+check(chunkFiles.length > 0, 'the browser half is split into chunks', chunkFiles)
+check(
+  chunkFiles.join(' ') === requestedChunks.join(' '),
+  'every chunk file is requested by the entry and registers itself',
+  { files: chunkFiles, registered: requestedChunks },
+)
 
 console.log('\nresource addresses')
 /** The parser in force after the plugin applied, when the repair is on. */
