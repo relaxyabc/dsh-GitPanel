@@ -493,7 +493,10 @@ function toHtml(node) {
     }
   }
   const body = toHtml(node.children)
-  if (node.type === 'input' || node.type === 'textarea') return `<${node.type} ${attributes.join(' ')}>`
+  if (node.type === 'input') return `<input ${attributes.join(' ')}>`
+  // A textarea is not void: without its closing tag every following sibling is
+  // parsed as its text content and the commit box renders as raw markup.
+  if (node.type === 'textarea') return `<textarea ${attributes.join(' ')}>${body}</textarea>`
   return `<${node.type} ${attributes.join(' ')}>${body}</${node.type}>`
 }
 
