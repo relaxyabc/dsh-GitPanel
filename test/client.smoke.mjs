@@ -438,7 +438,7 @@ function answerFor(request) {
 /** The parser the page shipped with, captured before the repair can replace it. */
 const nativeUrl = globalThis.URL
 const moduleLoader = createModuleLoader({
-  packageDir: join(here, '..'),
+  packageDir: join(here, '..', 'src'),
   packageId: 'GitPanel',
   require: globalThis.require,
   evaluate: (source) => new Function('window', 'require', 'fetch', source)(globalThis.window, moduleLoader.require, trackedFetch),
@@ -580,7 +580,7 @@ console.log('\nchunk graph')
 // Every package-local chunk has to be requested by the entry and register itself
 // under the package name: a file nobody loads is dead code, and one that registers
 // late or under another owner would surface only as a blank seat in the app.
-const chunkFiles = readdirSync(join(here, '..')).filter((name) => /^client\..+\.js$/.test(name)).sort()
+const chunkFiles = readdirSync(join(here, '..', 'src')).filter((name) => /^client\..+\.js$/.test(name)).sort()
 const requestedChunks = moduleLoader.registered().filter((key) => key !== 'client.js').sort()
 check(chunkFiles.length > 0, 'the browser half is split into chunks', chunkFiles)
 check(

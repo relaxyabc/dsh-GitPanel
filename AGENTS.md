@@ -8,7 +8,7 @@
 
 `GitPanel` 是一个 **DSH 插件 bundle**:给 DeepSeek Harness 的 Web 客户端添加一个 Git 管理工具(全页三栏面板;右侧边栏的 guide 只把它当门打开,不留标签页)。关键事实:
 
-- **零运行时依赖、零构建步骤**:交付什么运行什么。Host 半是 `index.js` 一个文件;浏览器半是 `client.js` 入口加若干**包内分片** `client.*.js`(见第 3 节第 9 条),两者都不是打包产物。
+- **零运行时依赖、零构建步骤**:交付什么运行什么。Host 半是根目录的 `index.js` 一个文件;浏览器半在 `src/`(相当于上游包的 `lib/`),是 `src/client.js` 入口加若干**包内分片** `src/client.*.js`(见第 3 节第 9 条)。两者都不是打包产物。
 - **一对"半"组成**:Host 半(Node,文件系统与 `git` 子进程)和浏览器半(React UI),通过唯一路由 `POST /api/local-git` 通信。
 - 清单为 `dsh.manifestVersion: 1`,要求 DSH ≥ `0.1.7-rc.1`,client 平台 `web`。
 
@@ -16,15 +16,16 @@
 
 ```
 dsh-GitPanel/           # 仓库根即包根(包名 GitPanel)
-├─ package.json        # 清单:dsh.manifestVersion / client.inject / exports / files 白名单(含 client.*.js)
+├─ package.json        # 清单:dsh.manifestVersion / client.inject / exports / files 白名单(含 src/client.*.js)
 ├─ cordis.patch.yml    # Host 半的插入补丁(服务 id: GitPanel)
 ├─ index.js            # Host 半:发现、git 子进程、解析器、路由 —— 唯一允许碰文件系统与进程的文件
-├─ client.js           # 浏览器半入口:模块词汇表、shared 接线表、Host 传输与文本助手、apply
-├─ client.*.js         # 浏览器半的包内分片(见第 3 节第 9 条):
+├─ icon.svg            # 面板图标
+├─ src/                # 浏览器半(相当于上游包的 lib/);目录名本身不是约定,改名要同步 exports["."]、exports["./client"] 与 files
+│  ├─ client.js        # 浏览器半入口:模块词汇表、shared 接线表、Host 传输与文本助手、apply
+│  └─ client.*.js      # 浏览器半的包内分片(见第 3 节第 9 条),必须与入口同级:
 │                      #   i18n(词典)/ style(样式表)/ rows(行与菜单)/ diff(diff 引擎与弹层)
 │                      #   branches(左栏)/ history(中栏与右栏)/ panel(整页面板)
 │                      #   settings(配置卡片)/ preview-fix(资源地址修复)/ sidebar(右侧边栏门)
-├─ icon.svg            # 面板图标
 ├─ README.md / LICENSE / AGENTS.md
 ├─ locale/{en,zh}.json # 仅插件卡片的 meta 标题与描述(Host 侧读取)
 └─ test/
@@ -45,7 +46,7 @@ dsh-GitPanel/           # 仓库根即包根(包名 GitPanel)
 6. **解析器与 git 输出一一对应**。`parsePorcelainV2`(`status --porcelain=v2 --branch -z`)、`parseNumstat`(`diff --numstat -z`)、`parseLog`(RS/US 记录分隔符,记录内不再按行解析)、`parseBranches`、`parseSubmodules` 都紧贴 git 的输出格式。改 git 参数就必须同步改解析器,并补 e2e 用例。
 7. **限额护栏**。`MAX_BODY_BYTES`、`GIT_TIMEOUT_MS`、`GIT_MAX_BUFFER`、`MAX_DISCOVERY_DEPTH`、`MAX_REPOSITORIES`、`MAX_DISCOVERY_ENTRIES`、`SKIPPED_DIRECTORIES` 是防失控的护栏。上调上限需要谨慎并在 PR 里说明动机;它们的存在理由优先于便利性。发现深度是插件配置 `discoveryDepth`(默认 3,运行时夹取到 1–`MAX_DISCOVERY_DEPTH`),`MAX_DISCOVERY_DEPTH` 始终是硬上限。该字段声明为 `volatile`,Loader 因此把实时引用交给插件、就地提交编辑而不重新 apply:Host 必须**每次调用时**解开这个引用读值(`effectiveDepth()`),不许在 apply 时缓存成数字;编辑入口是插件页面里**本包自己的配置位**(客户端 `configForms` + 共享设置表单,注册进 `plugins.bundle.config` 并以包名作 key),不新增自定义写操作,也不占用"官方"分组的 `plugins.item` 位置。`wholeFileDiff` 与深度同性质:也声明为 `volatile`,也必须按调用解引用(`effectiveWholeFileDiff()`),不许在 apply 时求值缓存。卡片本身按内置设置页的写法绘制:分组用 `section` + `h3` 标题,控件一律用共享 primitives(数值 `SettingsValueField`、开关 `Switch`、覆盖徽标 `Tag`),字段说明放标签旁的 ⓘ(`SettingsValueField` 的 `help`;开关行没有对应 primitive,自绘的按钮与披露区必须逐条对齐 primitives 的 `.helpButton` / `.help` 数值),不许自绘下拉框或常驻提示行。`filePreviewFix`(默认 `true`)与它们同性质,但读值的是**浏览器半**:客户端资源模型用 `new URL(address).hostname` 命名协议提供方,而 Chromium 对非特殊 scheme 不解析 authority(`new URL('dsh-resource://file/x').hostname` 得到 `''`),于是每个资源地址都没有提供方、右侧边栏的文件预览只剩「文件资源服务不可用」。浏览器半因此把 `URL` 换成**只对 `dsh-resource://` 地址**生效的包装(其余地址,含 base 解析与非法地址的抛错,一律交回原生实现),并通过 `configForms` 订阅本命名空间:未知状态按默认(开)处理、明确的 `false` 立即卸下并还原原生 `URL`、插件 dispose 也还原。这条修复是上游缺陷的补偿而非替代,禁止把它扩大成"接管所有 URL 解析";包装的既有代价(资源地址不是 `instanceof URL`、就地改写部件不回写地址)必须保留在注释与 README 里。
 8. **不做昂贵的投机调用**。`git submodule status` 在没有任何子模块的仓库上也要整树扫描(实测约 1 s),只有声明了子模块的仓库(存在 `submodule.*.path` 配置或索引中的 mode-160000 gitlink)才允许执行它;请求页面时不得读取尚未被选中的提交的文件统计(历史读操作 `log` 不带 `--numstat`,单提交文件由 `commitFiles` 承担)。新增 `git` 调用前先量一次它的固定开销。
-9. **浏览器半保持零构建**。`client.js` 必须始终是可直接 `new Function(...)` 求值的纯脚本:经 `window.__ModuleLoader__.load({ id, factory(require) })` 注册,React 经 `require('react')` 获取。禁止 `import` 语句、JSX、TypeScript、任何打包器指令。多文件的唯一通道是**包内分片**:文件与 `client.js` 同级、名字匹配 `client.<名字>.js`,自己 `window.__ModuleLoader__.load({ id: 'GitPanel', chunk: '<文件名>', factory })` 注册,入口用 `await require.async('./<文件名>')` 取回(documentpreview 的 Excel 表格就是这么加载的)。由此产生四条硬约束:(a) `apply` 是 `async`,且必须在注册任何席位之前把分片全部取回;(b) 分片之间不许互相依赖,依赖只能由 `client.js` 的 `shared` 表**单向**接出去,分片在 `create(shared)` 的解构行里声明自己要什么,读了没接线的名字就是 `ReferenceError`;(c) 分片必须登记进 `package.json` 的 `files`(`client.*.js`);(d) 三个浏览器侧测试都经 `test/module-loader.mjs` 按真实契约加载,**不许**退化成直接把 `client.js` 读成字符串求值 —— 那样分片不会被请求,只能在测试里跑通的 bundle 会悄悄通过;(e) 分片的 URL 只带**包级 rev**(DSH 按 `client.js` 的 mtime/ctime/size 算),所以只改分片时 URL 不变、浏览器会拿住那份 `immutable` 缓存:调试与验收要么硬刷新(Ctrl+Shift+R),要么顺手动一下 `client.js`,要么重启 DSH。
+9. **浏览器半保持零构建**。`client.js` 必须始终是可直接 `new Function(...)` 求值的纯脚本:经 `window.__ModuleLoader__.load({ id, factory(require) })` 注册,React 经 `require('react')` 获取。禁止 `import` 语句、JSX、TypeScript、任何打包器指令。多文件的唯一通道是**包内分片**:文件与**客户端入口**(`exports["./client"]` 指向的那个文件,现在是 `src/client.js`)同级、名字匹配 `client.<名字>.js`,自己 `window.__ModuleLoader__.load({ id: 'GitPanel', chunk: '<文件名>', factory })` 注册,入口用 `await require.async('./<文件名>')` 取回(documentpreview 的 Excel 表格就是这么加载的)。分片只认客户端入口的**目录**,与 Host 半放哪里无关 —— Host 半由 `exports["."]` 单独定位,把它挪去别处只改那一行。由此产生四条硬约束:(a) `apply` 是 `async`,且必须在注册任何席位之前把分片全部取回;(b) 分片之间不许互相依赖,依赖只能由 `client.js` 的 `shared` 表**单向**接出去,分片在 `create(shared)` 的解构行里声明自己要什么,读了没接线的名字就是 `ReferenceError`;(c) 分片必须登记进 `package.json` 的 `files`(`src/client.*.js`);(d) 三个浏览器侧测试都经 `test/module-loader.mjs` 按真实契约加载,**不许**退化成直接把 `client.js` 读成字符串求值 —— 那样分片不会被请求,只能在测试里跑通的 bundle 会悄悄通过;(e) 分片的 URL 只带**包级 rev**(DSH 按客户端入口的 mtime/ctime/size 算),所以只改分片时 URL 不变、浏览器会拿住那份 `immutable` 缓存:调试与验收要么硬刷新(Ctrl+Shift+R),要么顺手动一下入口文件,要么重启 DSH。
 10. **环境安全**。git 子进程环境保持 `GIT_TERMINAL_PROMPT=0` 与 `GIT_OPTIONAL_LOCKS=0`;不许添加会引入交互提示或仓库锁的设置。
 11. **配置声明零依赖**。插件 `Config` 是手写的 schemastery 兼容图(`Symbol.for('schemastery')` 标记 + `~standard.validate` + `{uid, refs}` 协议的 `toJSON`),不导入 schemastery 包;形状必须与 schemastery 的线协议保持一致,Host 才能把配置投影为原生设置表单。
 12. **右侧边栏只当门**。Git 的工具是全页面板,右侧边栏的标签页**不许留下记录**:正文一旦挂载就用自己的 `info.tab.actions.close()` 关掉自己(不要用 `ctx.sidebarRight.close(tabId)` —— 那是面向已发布席位绑定的命令,正文首次 effect 跑在绑定发布之前)。并且**每个导航只许开一次面板**:按 tabId 记住已处理过的 `navigation.revision`,只有 revision 增大、且正文可见时才 `selectPanel`;记录仅被恢复(revision 0)、或因切会话 / 展开列 / 面板重挂载而重新挂载时,**只关自己、绝不抢主区域**(各会话各存布局,抢一次就把用户刚点开的会话顶掉)。关闭被拒时只许渲染一张**不读 Host 数据**的兜底卡片。
@@ -66,7 +67,7 @@ dsh-GitPanel/           # 仓库根即包根(包名 GitPanel)
 
 以"加一个 `stash` 操作"为例,完整流程如下,顺序固定:
 
-1. **Host 半**(`index.js`):实现 `writeStash(repositoryPath, args)`,注册进 `WRITE_OPERATIONS`,写全 JSDoc。需要新 git 参数时同步更新对应解析器。
+1. **Host 半**(根目录的 `index.js`):实现 `writeStash(repositoryPath, args)`,注册进 `WRITE_OPERATIONS`,写全 JSDoc。需要新 git 参数时同步更新对应解析器。
 2. **浏览器半**:按功能落进对应分片 —— 文案进 `client.i18n.js`,行/菜单进 `client.rows.js`,面板逻辑进 `client.panel.js`,栏位进 `client.branches.js` / `client.history.js`;需要新东西时先在 `client.js` 的 `shared` 表里接出去,再在分片的解构行里声明。操作通过 `mutate('stash', args, t('notice.xxx'))` 接入(读操作用 `callHost`);需要交互时用 `setDialog`(确认/单输入)或 `setMenu`(右键菜单)。
 3. **Host e2e**(`test/host.e2e.mjs`):至少一条成功用例 + 一条拒绝用例(路径越界 / 缺参 / 非法参数值)。
 4. **冒烟**(`test/client.smoke.mjs`):新 UI 有可断言的渲染状态时,补一条 `check()`。
@@ -92,7 +93,7 @@ node test/preview.mjs       # 改样式/布局后必跑,肉眼检查明暗两版
 
 ## 7. 清单与文档同步
 
-- **`files` 白名单**:`package.json` 的 `files` 决定随包交付的文件;新增源文件、locale、资源必须登记,否则不会发布。浏览器半的分片由 `client.*.js` 一次性覆盖 —— 新增分片时确认它在该 glob 里,但**不要**把 `client.js` 之外的配置/测试文件塞进来。
+- **`files` 白名单**:`package.json` 的 `files` 决定随包交付的文件;新增源文件、locale、资源必须登记,否则不会发布。浏览器半的分片由 `src/client.*.js` 一次性覆盖 —— 新增分片时确认它在该 glob 里,但**不要**把配置/测试文件塞进来。
 - **`client.inject`**:仅在确需新的官方 client 服务时追加;`engines.dsh` 只随真正用到的宿主能力上调,不许预防性抬升。
 - **exports 映射**:新增对外入口必须同时登记 `exports` 与 `files`。
 - **README**:操作表(`op` 一览)、架构图、限额数字与代码保持一致;行为变更必须同步,文档漂移按 bug 处理。

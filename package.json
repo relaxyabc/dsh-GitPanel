@@ -7,14 +7,14 @@
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",
-    "./client": "./client.js",
+    "./client": "./src/client.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
-    "client.js",
-    "client.*.js",
+    "src/client.js",
+    "src/client.*.js",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json"

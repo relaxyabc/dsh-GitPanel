@@ -149,7 +149,7 @@ async function applyClient(section) {
 // The page installs its module loader before any bundle runs, so the harness does
 // the same, and every chunk the bundle asks for goes through the same contract.
 const moduleLoader = createModuleLoader({
-  packageDir: join(here, '..'),
+  packageDir: join(here, '..', 'src'),
   packageId: 'GitPanel',
   require: globalThis.require,
   evaluate: (source) => new Function('window', 'require', 'fetch', source)(globalThis.window, moduleLoader.require, () => Promise.reject(new Error('no Host in this harness'))),
@@ -377,7 +377,7 @@ if (chromium === undefined) {
   const workspace = mkdtempSync(join(tmpdir(), 'git-panel-preview-'))
   try {
     const page = join(workspace, 'probe.html')
-    writeFileSync(page, probePage(`file:///${join(here, '..', 'client.js').replace(/\\/g, '/')}`))
+    writeFileSync(page, probePage(`file:///${join(here, '..', 'src', 'client.js').replace(/\\/g, '/')}`))
     const output = execFileSync(
       chromium,
       ['--headless', '--disable-gpu', '--no-sandbox', '--user-data-dir=' + join(workspace, 'profile'), '--dump-dom', '--virtual-time-budget=5000', `file:///${page.replace(/\\/g, '/')}`],

@@ -82,28 +82,30 @@ new URL('dsh-resource://file/x').hostname   // Node / 规范:'file'   Chromium:'
 插件是一个 DSH bundle,由两个对等的"半"组成,通过一条认证 Fetch 路由通信:
 
 ```
-┌─ 浏览器半  client.js + client.*.js ────┐         ┌─ Host 半  index.js ──────────────────┐
-│ client.js:注册入口 + 接线 + apply     │  fetch  │ ctx.connection.fetch.register        │
-│ client.*.js:包内分片(词典 / 样式 /   │ ──────▶ │ POST /api/local-git                  │
-│ 面板 / 三栏 / diff / 设置卡 / 修复)   │         │ (继承 Host/Origin 围栏 + 会话认证)    │
-│ React,createElement,无 JSX、无构建    │ ◀────── │ resolveInside 路径围栏 → execFile(git)│
-│ inject: slots/sidebarRightTabs/layout  │         └──────────────────────────────────────┘
-└────────────────────────────────────────┘  JSON
+┌─ 浏览器半  src/client.js + src/client.*.js ─┐     ┌─ Host 半  index.js ─────────────────┐
+│ client.js:注册入口 + 接线 + apply          │ fetch│ ctx.connection.fetch.register        │
+│ client.*.js:包内分片(词典 / 样式 /        │ ────▶│ POST /api/local-git                  │
+│ 面板 / 三栏 / diff / 设置卡 / 修复)        │      │ (继承 Host/Origin 围栏 + 会话认证)    │
+│ React,createElement,无 JSX、无构建         │ ◀────│ resolveInside 路径围栏 → execFile(git)│
+│ inject: slots/sidebarRightTabs/layout       │      └──────────────────────────────────────┘
+└─────────────────────────────────────────────┘ JSON
 ```
+
+Host 半在仓库根([index.js](index.js)),浏览器半在 [src/](src)(相当于上游包的 `lib/`)。两半的定位互不相干:Host 半由 `exports["."]` 决定,浏览器半入口由 `exports["./client"]` 决定 —— 只有**分片**必须与客户端入口同级(Host 读 `dirname(clientPath)` 下的兄弟文件,浏览器也只把 `client.js` 换成分片名,URL 里不含路径)。
 
 | 文件 | 职责 |
 |---|---|
 | `index.js` | Host 半:仓库发现、`git` 子进程调用与全部解析器;注册唯一路由 `POST /api/local-git`;注入 `webServer`、`connection` |
-| `client.js` | 浏览器半的**入口**:模块词汇表、`shared` 接线表、Host 传输与文本助手,以及 `apply`(加载全部分片、注册各席位);注入 `slots`、`sidebarRightTabs`、`layout`、`configForms`;仅通过 `/api/local-git` 与 Host 交互 |
-| `client.*.js` | 浏览器半的**包内分片**(见[为什么分片](#为什么分片)):词典、样式、主面板、三栏、diff、行组件、设置卡、右侧边栏门、资源地址修复 |
+| `src/client.js` | 浏览器半的**入口**:模块词汇表、`shared` 接线表、Host 传输与文本助手,以及 `apply`(加载全部分片、注册各席位);注入 `slots`、`sidebarRightTabs`、`layout`、`configForms`;仅通过 `/api/local-git` 与 Host 交互 |
+| `src/client.*.js` | 浏览器半的**包内分片**(见[为什么分片](#为什么分片)):词典、样式、主面板、三栏、diff、行组件、设置卡、右侧边栏门、资源地址修复 |
 | `cordis.patch.yml` | bundle 补丁层:把 Host 半以服务 id `GitPanel` 插入组合 |
-| `package.json` | `dsh.manifestVersion: 1`;client 平台 `web`,依赖 `@deepseek-ai/dsh-client-ui-sidebar-right`、`@deepseek-ai/dsh-client-ui-session`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-ui-primitives`;导出映射与 `files` 白名单(含 `client.*.js`) |
+| `package.json` | `dsh.manifestVersion: 1`;client 平台 `web`,依赖 `@deepseek-ai/dsh-client-ui-sidebar-right`、`@deepseek-ai/dsh-client-ui-session`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-ui-primitives`;导出映射与 `files` 白名单(含 `src/client.*.js`) |
 | `locale/*.json` | 插件卡片(插件列表与清单)的包名与描述:Host 在加载插件前读取,只认 `meta.title` / `meta.description`;面板内的界面文案不在这里 |
 | `test/*` | 四个无框架 Node 测试(见[开发](#开发)) |
 
 ### 为什么分片
 
-浏览器半没有打包器:DSH 把它当普通脚本加载,`client.js` 自己调 `window.__ModuleLoader__.load({ id, factory })` 注册工厂,`import` 既被本仓库的不变量禁止(整个文件必须能 `new Function(...)` 求值),DSH 的 `require` 也只认平台种子与清单里 `inject` 的包,不认包内相对路径。官方给零构建包留的通道是**包内分片**:分片文件与 `client.js` 同级、名字匹配 `client.<名字>.js`,自己注册成
+浏览器半没有打包器:DSH 把它当普通脚本加载,`client.js` 自己调 `window.__ModuleLoader__.load({ id, factory })` 注册工厂,`import` 既被本仓库的不变量禁止(整个文件必须能 `new Function(...)` 求值),DSH 的 `require` 也只认平台种子与清单里 `inject` 的包,不认包内相对路径。官方给零构建包留的通道是**包内分片**:分片文件与 `exports["./client"]` 指向的入口同级、名字匹配 `client.<名字>.js`,自己注册成
 
 ```js
 window.__ModuleLoader__.load({ id: 'GitPanel', chunk: 'client.panel.js', factory: () => ({ create }) })
@@ -113,8 +115,8 @@ window.__ModuleLoader__.load({ id: 'GitPanel', chunk: 'client.panel.js', factory
 
 - **只能异步**:分片经 `/plugins/GitPanel/client.<名字>.js?rev=<当前版本>` 按需下发,因此 `apply` 是 `async` 的,且必须在注册任何席位之前把分片取回来(否则首屏可能渲染到还等着 bundle 的组件)。
 - **只向一侧依赖**:分片之间不互相 import,依赖关系全部由 `client.js` 的 `shared` 表显式接线;分片自己声明它要用到的名字,一个分片读了没接线的东西就是 `ReferenceError`,冒烟测试会当场报出来。
-- **每个文件都要登记**:`package.json` 的 `files` 用 `client.*.js` 一次性覆盖。
-- **分片 URL 只带包级版本**:DSH 按 `client.js` 的 mtime/ctime/size 算出包级 rev,分片经 `/plugins/GitPanel/client.<名字>.js?rev=<该 rev>` 下发并带 `immutable` 缓存。因此**只改分片**时 URL 不变,浏览器会拿住旧分片 —— 改分片后请**硬刷新**(Ctrl+Shift+R),或顺手动一下 `client.js`,或重启 DSH;改 `client.js` 本身则会换掉全部 rev。
+- **每个文件都要登记**:`package.json` 的 `files` 用 `src/client.*.js` 一次性覆盖。
+- **分片 URL 只带包级版本**:DSH 按客户端入口的 mtime/ctime/size 算出包级 rev,分片经 `/plugins/GitPanel/client.<名字>.js?rev=<该 rev>` 下发并带 `immutable` 缓存。因此**只改分片**时 URL 不变,浏览器会拿住旧分片 —— 改分片后请**硬刷新**(Ctrl+Shift+R),或顺手动一下 `src/client.js`,或重启 DSH;改入口文件本身则会换掉全部 rev。
 - 资源地址修复仍然是**第一个**被接线的东西:它先于其它分片取回并装上,以保证页面解析任何资源地址之前它已经在位。
 
 ### 通信协议
@@ -262,18 +264,19 @@ dsh-GitPanel/                             # 插件包 GitPanel(仓库根即包�
 ├─ package.json                          # bundle 清单(manifestVersion 1、导出映射、files 白名单)
 ├─ cordis.patch.yml                      # Host 半的插入补丁
 ├─ index.js                              # Host 半:发现 / git 子进程 / 解析器 / 路由
-├─ client.js                             # 浏览器半入口:词汇表 / shared 接线 / apply
-├─ client.i18n.js                        # 分片:中英词典
-├─ client.style.js                       # 分片:设计令牌样式表与 Git 图标路径
-├─ client.rows.js                        # 分片:变更 / 分支 / 提交行,右键菜单,对话框
-├─ client.diff.js                        # 分片:unified diff 解析、变更导航、并排视图与弹层
-├─ client.branches.js                    # 分片:左栏(分支、远程、子模块、工作树与提交框)
-├─ client.history.js                     # 分片:中栏(历史)与右栏(提交信息与文件)
-├─ client.panel.js                       # 分片:整页面板(状态、Host 调用、工具栏、三栏组装)
-├─ client.settings.js                    # 分片:插件页面上的配置卡片
-├─ client.preview-fix.js                 # 分片:资源地址修复及其地址读取
-├─ client.sidebar.js                     # 分片:右侧边栏的门与标题
 ├─ icon.svg                              # 面板图标
+├─ src/                                  # 浏览器半(相当于上游包的 lib/);分片必须与 client.js 同级
+│  ├─ client.js                          # 浏览器半入口:词汇表 / shared 接线 / apply
+│  ├─ client.i18n.js                     # 分片:中英词典
+│  ├─ client.style.js                    # 分片:设计令牌样式表与 Git 图标路径
+│  ├─ client.rows.js                     # 分片:变更 / 分支 / 提交行,右键菜单,对话框
+│  ├─ client.diff.js                     # 分片:unified diff 解析、变更导航、并排视图与弹层
+│  ├─ client.branches.js                 # 分片:左栏(分支、远程、子模块、工作树与提交框)
+│  ├─ client.history.js                  # 分片:中栏(历史)与右栏(提交信息与文件)
+│  ├─ client.panel.js                    # 分片:整页面板(状态、Host 调用、工具栏、三栏组装)
+│  ├─ client.settings.js                 # 分片:插件页面上的配置卡片
+│  ├─ client.preview-fix.js              # 分片:资源地址修复及其地址读取
+│  └─ client.sidebar.js                  # 分片:右侧边栏的门与标题
 ├─ README.md / LICENSE / AGENTS.md
 ├─ locale/
 │  ├─ en.json                            # 插件卡片的包名与描述(英)

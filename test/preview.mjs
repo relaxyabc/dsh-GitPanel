@@ -247,7 +247,7 @@ function trackedFetch(url, init) {
 // The page installs its module loader before any bundle runs, so the harness does
 // the same, and every chunk the bundle asks for goes through the same contract.
 const moduleLoader = createModuleLoader({
-  packageDir: join(here, '..'),
+  packageDir: join(here, '..', 'src'),
   packageId: 'GitPanel',
   require: globalThis.require,
   evaluate: (source) => new Function('window', 'require', 'fetch', source)(globalThis.window, moduleLoader.require, trackedFetch),
