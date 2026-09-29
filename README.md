@@ -15,11 +15,14 @@
 
 ### 安装
 
-1. 装进 profile:
+1. 装进 profile —— `dsh plugin` 把参数原样转给 pnpm:
 
    ```sh
-   dsh plugin --profile <name> add E:\owner\dsh-GitPanel
+   dsh plugin --profile <name> add github:relaxyabc/dsh-GitPanel    # 从 GitHub(公开仓库,默认分支 main)
+   dsh plugin --profile <name> add E:\owner\dsh-GitPanel            # 或:开发本仓库时直接装本地路径
    ```
+
+   GitHub 形式装的是**拷贝**,升级用 `dsh plugin --profile <name> update GitPanel` 重新解析(要固定版本就写 `github:relaxyabc/dsh-GitPanel#v0.2.0` 或 `#<commit>`);本地路径形式装的是**指向仓库的链接**,改完代码重启即生效,适合边改边用。
 
 2. 在 profile 的 `cordis.patch.yml`(或以 `--patch` 叠加层)里插入下面的块 —— 包内 `cordis.patch.yml` 即此内容:
 
