@@ -21,10 +21,6 @@
   "engines": {
     "dsh": ">=0.1.7-rc.1"
   },
-  "meta": {
-    "title": "Git",
-    "description": "Browse workspaces, branches, changes and commits, and commit or push from a full-page tool."
-  },
   "dsh": {
     "manifestVersion": 1,
     "bundle": {

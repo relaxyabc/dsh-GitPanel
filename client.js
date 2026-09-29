@@ -48,17 +48,32 @@ window.__ModuleLoader__.load({
     /** The whole-file diff configuration field the Plugins page card edits. */
     const WHOLE_FILE_FIELD = 'wholeFileDiff'
 
+    /** The file-preview-fix configuration field the Plugins page card edits. */
+    const FILE_PREVIEW_FIELD = 'filePreviewFix'
+
     /** Section id of the settings card's discovery group, tying its heading to the region. */
     const DISCOVERY_SECTION_ID = 'GitPanel-settings-discovery'
 
     /** Section id of the settings card's diff-display group. */
     const DISPLAY_SECTION_ID = 'GitPanel-settings-display'
 
+    /** Section id of the settings card's file-preview group. */
+    const FILE_PREVIEW_SECTION_ID = 'GitPanel-settings-preview'
+
     /** Element id of the discovery-depth input, so its label points at the control. */
     const DEPTH_INPUT_ID = 'GitPanel-discovery-depth'
 
     /** Element id of the whole-file diff's disclosure region, so its button points at it. */
     const WHOLE_FILE_HELP_ID = 'GitPanel-whole-file-help'
+
+    /** Element id of the file-preview fix's disclosure region, so its button points at it. */
+    const FILE_PREVIEW_HELP_ID = 'GitPanel-file-preview-help'
+
+    /** The address scheme the client's resource model serves, `<type>` naming a provider. */
+    const RESOURCE_SCHEME = 'dsh-resource:'
+
+    /** The resource address prefix whose host is compared case-insensitively, as the parser does. */
+    const RESOURCE_PREFIX = 'dsh-resource://'
 
     /**
      * The whole-file switch's conversion spec.
@@ -70,6 +85,16 @@ window.__ModuleLoader__.load({
     const WHOLE_FILE_SPEC = {
       field: WHOLE_FILE_FIELD,
       format: (value) => (value === true ? 'true' : 'false'),
+      parse: (text) => (text === '' ? { kind: 'clear' } : text === 'true' ? { kind: 'set', value: true } : text === 'false' ? { kind: 'set', value: false } : undefined),
+    }
+
+    /**
+     * The file-preview switch's conversion spec, staged exactly like the
+     * whole-file one: draft text in, a real boolean out on save.
+     */
+    const FILE_PREVIEW_SPEC = {
+      field: FILE_PREVIEW_FIELD,
+      format: (value) => (value === false ? 'false' : 'true'),
       parse: (text) => (text === '' ? { kind: 'clear' } : text === 'true' ? { kind: 'set', value: true } : text === 'false' ? { kind: 'set', value: false } : undefined),
     }
 
@@ -154,6 +179,229 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The protocol key of one address, read without the URL parser.
+     *
+     * The client's resource model names a provider by the host of a
+     * `dsh-resource://<type>/…` address and reads that host with `new
+     * URL(address).hostname`. Chromium's URL parser never treats a non-special
+     * scheme's authority as a host — `new URL('dsh-resource://file/x').hostname`
+     * is `''` there, while Node and the specification say `'file'` — so on the
+     * affected browsers every resource address resolves to no protocol at all,
+     * the sidebar reports that the file resource service is unavailable, and no
+     * provider ever opens. This reads the same host out of the string instead,
+     * which is what the upstream fix does.
+     *
+     * @param {unknown} address - the address to read.
+     * @returns {string|undefined} the lower-cased protocol key, or undefined when the string is not a resource address with a host.
+     */
+    function resourceProtocolOf(address) {
+      if (typeof address !== 'string') return undefined
+      if (address.slice(0, RESOURCE_PREFIX.length).toLowerCase() !== RESOURCE_PREFIX) return undefined
+      const rest = address.slice(RESOURCE_PREFIX.length)
+      const end = rest.search(/[/?#]/)
+      const host = end === -1 ? rest : rest.slice(0, end)
+      return host === '' ? undefined : host.toLowerCase()
+    }
+
+    /**
+     * The file-preview fix's plugin state.
+     *
+     * `URL` is replaced with a wrapper so every later `new URL(...)` in the page
+     * reads a resource address the way the specification says. `native` is the
+     * parser that wrapper replaced — restored by identity, never by prototype,
+     * because the wrapper is an ordinary function whose prototype is
+     * `Function.prototype`. `value` is the setting's draft text, `undefined`
+     * meaning the Host has not answered yet and the documented default (on)
+     * applies.
+     */
+    const filePreview = { value: undefined, cached: null, native: null }
+
+    /**
+     * The configuration-service snapshot's answer for one field.
+     *
+     * `value` carries the Host's resolved section, so it arrives as a plain
+     * value; a live reference is unwrapped anyway, because a volatile field is
+     * exactly the kind whose stored shape can differ from its resolved one.
+     *
+     * @param {object} snapshot - the settings namespace snapshot.
+     * @param {string} field - the field to read.
+     * @returns {unknown} the resolved value, or undefined when the Host has said nothing.
+     */
+    function settingsValue(snapshot, field) {
+      const section = snapshot?.value
+      if (section === null || typeof section !== 'object') return undefined
+      const value = section[field]
+      if (value !== null && typeof value === 'object' && typeof value.get === 'function') return value.get()
+      return value
+    }
+
+    /**
+     * Whether the file-preview fix is in force right now.
+     *
+     * Only an explicit `false` turns it off: the default is on, and a
+     * deployment that never served the field, a client that has not read the
+     * settings document yet, or a stored value of the wrong shape all keep the
+     * breakage compensated instead of leaving the preview dead.
+     *
+     * @returns {boolean} whether the browser half should repair resource addresses.
+     */
+    function filePreviewFixEnabled() {
+      return filePreview.value !== 'false'
+    }
+
+    /**
+     * Install the URL wrapper that reports resource addresses correctly.
+     *
+     * The wrapper is deliberately narrow: only `dsh-resource://` addresses
+     * return the view, and every other address — including the ones a page
+     * parses while this is installed — goes to the URL implementation itself,
+     * unchanged. A browser whose parser already reports the host (Node, jsdom)
+     * is unaffected for the same reason, which is what makes this
+     * engine-independent, and no substitute for the upstream fix.
+     *
+     * A resource address cannot simply be a `URL` subclass that assigns
+     * `hostname`: Chromium's URL is an exotic object whose parts are
+     * unforgeable, and there the assignment is silently dropped for a
+     * non-special scheme while every native method invoked through the subclass
+     * still works. The view is therefore a wrapper that answers the parts the
+     * repair is about and forwards everything else, which costs one thing
+     * worth naming: such an address is not `instanceof URL`, and mutating one
+     * of its parts does not rewrite it. Resource addresses are read, never
+     * rewritten, so neither is exercised.
+     *
+     * One consequence of replacing a global rather than a call site: the
+     * wrapper also stands in for the URL *constructor*, so its statics have to
+     * stay reachable — the client mints blob URLs for attachments and document
+     * renderers through this very global.
+     *
+     * @returns {boolean} whether the wrapper is in force after the call.
+     */
+    function installFilePreviewFix() {
+      if (filePreview.cached !== null) return true
+      try {
+        const NativeUrl = globalThis.URL
+        if (typeof NativeUrl !== 'function') return false
+        /**
+         * A `URL` that also knows the host of a resource address.
+         *
+         * Declared inside `installFilePreviewFix` so the parser it forwards to
+         * stays the constructor captured when the wrapper was installed, never
+         * a constructor this file introduced.
+         *
+         * @param {unknown} address - the address to parse.
+         * @param {unknown} base - an optional base address.
+         * @returns {object} the parsed address.
+         */
+        function ResourceAwareUrl(address, base) {
+          const host = resourceProtocolOf(address)
+          const parsed = base === undefined ? new NativeUrl(address) : new NativeUrl(address, base)
+          if (host === undefined) return parsed
+          const view = { hostname: host, host }
+          Object.setPrototypeOf(view, NativeUrl.prototype)
+          return new Proxy(view, {
+            /**
+             * Answer the resource host, then forward everything else.
+             *
+             * @param {object} target - the view.
+             * @param {string|symbol} property - the property read.
+             * @param {unknown} receiver - the proxy that received the read.
+             * @returns {unknown} the property value.
+             */
+            get(target, property, receiver) {
+              if (property === 'hostname' || property === 'host') return Reflect.get(target, property, receiver)
+              const value = Reflect.get(parsed, property, parsed)
+              // A native URL method is bound to the URL it came from: calling
+              // it with this proxy as `this` is an illegal invocation.
+              return typeof value === 'function' ? value.bind(parsed) : value
+            },
+            /**
+             * @param {object} target - the view.
+             * @param {string|symbol} property - the property asked about.
+             * @returns {boolean} whether the parsed address carries it.
+             */
+            has(target, property) {
+              return Reflect.has(target, property) || property in parsed
+            },
+          })
+        }
+        filePreview.native = NativeUrl
+        filePreview.cached = ResourceAwareUrl
+        // Inheriting from the URL constructor keeps every static the rest of
+        // the client reaches through this global — `createObjectURL`,
+        // `revokeObjectURL`, `parse` — without listing them, and keeps any
+        // static a future engine adds.
+        Object.setPrototypeOf(ResourceAwareUrl, NativeUrl)
+        globalThis.URL = ResourceAwareUrl
+        return true
+      } catch {
+        // An environment this cannot wrap keeps the parser it shipped with,
+        // which is exactly the state the setting's default already assumes.
+        filePreview.cached = null
+        filePreview.native = null
+        return false
+      }
+    }
+
+    /**
+     * Remove the URL wrapper again, restoring the parser the page shipped with.
+     *
+     * The parser is restored by identity rather than by walking the wrapper's
+     * prototype chain: the wrapper is an ordinary function, so its prototype is
+     * `Function.prototype` and that chain leads nowhere near a URL.
+     *
+     * @returns {void} nothing.
+     */
+    function uninstallFilePreviewFix() {
+      const patched = filePreview.cached
+      const original = filePreview.native
+      filePreview.cached = null
+      filePreview.native = null
+      if (patched === null || original === null) return
+      try {
+        if (globalThis.URL === patched) globalThis.URL = original
+      } catch {
+        // A page that froze `URL` keeps the wrapper; the setting is still
+        // honoured on the next load, where nothing is installed at all.
+      }
+    }
+
+    /**
+     * Follow the plugin's file-preview setting for the life of the plugin.
+     *
+     * The patch is installed unconditionally first and only removed once the
+     * Host says the setting is off. Gating the installation on a settings read
+     * would break the preview on every load that restores a document tab before
+     * the settings document arrives — the one ordering where the fix is needed
+     * and not yet known — so "unknown" resolves to the documented default while
+     * an explicit "off" still takes effect as soon as it is known.
+     *
+     * @param {object} ctx - the apply-scope client context.
+     * @returns {Function} the disposer ending the watch.
+     */
+    function watchFilePreviewFix(ctx) {
+      const form = ctx.configForms.get(SETTINGS_NS)
+      installFilePreviewFix()
+      /**
+       * Apply the latest answer; only a known setting ever changes the patch.
+       *
+       * @returns {void} nothing.
+       */
+      const sync = () => {
+        const value = settingsValue(form.getSnapshot(), FILE_PREVIEW_FIELD)
+        if (typeof value !== 'boolean') return
+        filePreview.value = String(value)
+        if (filePreviewFixEnabled()) installFilePreviewFix()
+        else uninstallFilePreviewFix()
+      }
+      const unsubscribe = form.subscribe(sync)
+      sync()
+      return () => {
+        unsubscribe()
+        uninstallFilePreviewFix()
+      }
+    }
+
+    /**
      * I18n namespace and dictionaries. Every user-facing string lives in `en` /
      * `zh` and is read through `t()` at render time, so a language switch needs
      * no re-registration; `locale/*.json` stays manifest metadata only.
@@ -230,8 +478,13 @@ window.__ModuleLoader__.load({
       'wholeFileDiff.help': 'About the whole-file diff',
       'wholeFileDiff.help.body': 'Off: only the changed hunks are shown. On: both sides show the whole file, with every change listed beside the line numbers to jump to.',
       'wholeFileDiff.help.note': 'Change navigation stays available either way. A diff modal renders at most 3000 rows.',
+      'filePreviewFix': 'Repair file-preview addresses',
+      'filePreviewFix.help': 'About the file-preview repair',
+      'filePreviewFix.help.body': 'Handles dsh-client-resources reading protocolOf from new URL(address).hostname, which makes the file preview report that the resource service is unavailable. See https://github.com/deepseek-ai/deepseek-harness/discussions/6437.',
+      'filePreviewFix.help.note': 'Only dsh-resource:// addresses are repaired; every other address is parsed by the browser itself. Turn it off once DSH carries the upstream fix.',
       'config.discovery': 'Repository discovery',
       'config.display': 'Diff display',
+      'config.preview': 'File preview',
       'noWorkspace': 'No workspace is open yet.',
       'noRepository': 'No Git repository was found under this workspace.',
       'detached': 'detached HEAD',
@@ -359,8 +612,13 @@ window.__ModuleLoader__.load({
       'wholeFileDiff.help': '整文件对照说明',
       'wholeFileDiff.help.body': '关闭:只显示改动的片段。开启:左右两栏显示整个文件,并在行号旁列出每处改动以供跳转。',
       'wholeFileDiff.help.note': '无论开关如何,改动导航都可用;差异弹窗最多渲染 3000 行。',
+      'filePreviewFix': '修复文件预览地址',
+      'filePreviewFix.help': '文件预览修复说明',
+      'filePreviewFix.help.body': '处理 dsh-client-resources 的 protocolOf 依赖 new URL(address).hostname,导致文件预览报“文件资源服务不可用”的问题。参考 https://github.com/deepseek-ai/deepseek-harness/discussions/6437。',
+      'filePreviewFix.help.note': '只改 dsh-resource:// 地址,其余地址仍由浏览器自行解析。DSH 上游修复后可以关闭。',
       'config.discovery': '仓库发现',
       'config.display': '差异显示',
+      'config.preview': '文件预览',
       'noRepository': '此工作区下未找到 Git 仓库。',
       'detached': '分离 HEAD',
       'files': '文件',
@@ -1382,9 +1640,13 @@ window.__ModuleLoader__.load({
       const { t } = props
       const state = props.useGitSettings((snapshot) => snapshot)
       const [wholeFileHelp, setWholeFileHelp] = React.useState(false)
+      const [filePreviewHelp, setFilePreviewHelp] = React.useState(false)
       // A cleared draft inherits the composition default (off), so the switch
       // previews the value a save would leave rather than the raw draft text.
       const wholeFile = state[WHOLE_FILE_FIELD].text === 'true'
+      // This field's composition default is the reverse: a cleared draft means
+      // the repair is on, so only the literal `false` reads as off.
+      const filePreview = state[FILE_PREVIEW_FIELD].text !== 'false'
       return h(
         primitives.SettingsForm,
         {
@@ -1485,6 +1747,57 @@ window.__ModuleLoader__.load({
               : null,
           ),
         ),
+        h(
+          'section',
+          { className: 'git-panel-config-section', 'aria-labelledby': FILE_PREVIEW_SECTION_ID },
+          h('h3', { className: 'git-panel-config-heading', id: FILE_PREVIEW_SECTION_ID }, t('config.preview')),
+          h(
+            'div',
+            { className: 'git-panel-config-toggle' },
+            h(
+              'div',
+              { className: 'git-panel-config-toggle-row' },
+              h(
+                'div',
+                { className: 'git-panel-config-toggle-label' },
+                h('span', null, t('filePreviewFix')),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'git-panel-config-help-button',
+                    'aria-label': t('filePreviewFix.help'),
+                    'aria-expanded': filePreviewHelp,
+                    'aria-controls': FILE_PREVIEW_HELP_ID,
+                    onClick: () => setFilePreviewHelp(filePreviewHelp !== true),
+                  },
+                  h(primitives.IconInfoOutlineRegular, { size: 12 }),
+                ),
+              ),
+              state[FILE_PREVIEW_FIELD].overridden
+                ? h(
+                    'span',
+                    { className: 'git-panel-config-badges' },
+                    h(primitives.Tag, { tone: 'neutral' }, t('settings.overridden')),
+                    h('button', { type: 'button', className: 'git-panel-config-reset', disabled: state.writable !== true, onClick: () => props.resetField(FILE_PREVIEW_FIELD) }, t('settings.reset')),
+                  )
+                : null,
+              h(primitives.Switch, {
+                checked: filePreview,
+                label: t('filePreviewFix'),
+                disabled: state.writable !== true,
+                onChange: (next) => props.edit(FILE_PREVIEW_FIELD, next === true ? 'true' : 'false'),
+              }),
+            ),
+            filePreviewHelp === true
+              ? h(
+                  'div',
+                  { id: FILE_PREVIEW_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('filePreviewFix.help') },
+                  helpParagraphs(t('filePreviewFix.help.body'), t('filePreviewFix.help.note')),
+                )
+              : null,
+          ),
+        ),
       )
     }
 
@@ -1495,8 +1808,13 @@ window.__ModuleLoader__.load({
      * @returns {{ inject: Function, dispose: Function }} the card's slot face and its disposer.
      */
     function createSettingsCard(configForms) {
-      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC])
-      const store = form.bind(() => ({ ...form.shell(), [DEPTH_FIELD]: form.field(DEPTH_FIELD), [WHOLE_FILE_FIELD]: form.field(WHOLE_FILE_FIELD) }))
+      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC, FILE_PREVIEW_SPEC])
+      const store = form.bind(() => ({
+        ...form.shell(),
+        [DEPTH_FIELD]: form.field(DEPTH_FIELD),
+        [WHOLE_FILE_FIELD]: form.field(WHOLE_FILE_FIELD),
+        [FILE_PREVIEW_FIELD]: form.field(FILE_PREVIEW_FIELD),
+      }))
       return {
         /**
          * The face the card's slot registration injects.
@@ -2539,6 +2857,13 @@ window.__ModuleLoader__.load({
       } catch {
         primitives = null
       }
+      // The file-preview repair is installed before anything can resolve a
+      // resource address — the right Sidebar may already hold a document tab
+      // when this plugin applies — and it needs only the configuration form
+      // service, so it does not share the settings card's primitives guard.
+      if (typeof ctx.configForms?.get === 'function') {
+        ctx.effect(() => watchFilePreviewFix(ctx), 'ui-GitPanel: file-preview addresses')
+      }
       ctx.effect(
         () => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: LOCALE_NS }, GitPanel)),
         'ui-GitPanel: git main panel',
@@ -2599,6 +2924,20 @@ window.__ModuleLoader__.load({
       }
     }
 
-    return { inject, apply }
+    /**
+     * Read the host of one resource address, as the repair reads it.
+     *
+     * The repair's whole substance is this one derivation, and a headless
+     * module test cannot observe a global the page patched, so the seam is
+     * exported for the smoke test rather than left to be re-implemented there.
+     *
+     * @param {unknown} address - the address to read.
+     * @returns {string|undefined} the protocol key the repair resolves, or undefined for any other address.
+     */
+    function auditResourceAddress(address) {
+      return resourceProtocolOf(address)
+    }
+
+    return { inject, apply, auditResourceAddress }
   },
 })

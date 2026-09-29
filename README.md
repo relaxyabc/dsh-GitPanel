@@ -46,7 +46,7 @@
 - **主面板**:左侧面板栏的 Git 图标进入,全页三栏布局 —— 左(分支 + 改动 + 提交框)、中(历史)、右(上:提交信息,下:该提交的文件改动)。
 - **右侧边栏只当门,不留页**:右侧边栏 guide 里的 Git 胶囊、以及从上一会话恢复出来的 Git 标签页,一旦挂载就**用标签页自己的 `close()` 关掉** —— 因为布局按会话持久化,留下的标签页会跨刷新复活。并且**一次导航只开一次面板**:只被恢复、或因切会话 / 展开列而重新挂载的记录只关自己、绝不抢主区域(否则会把用户刚点开的会话顶掉)。若控制器拒绝关闭,标签页里只显示一张不读任何仓库数据的兜底卡片(标题、说明与「打开 Git 面板」按钮),不会停在一份过期的摘要上。
 - **顶栏**:工作区目录与仓库字段常显(带小标签、悬停显示完整路径),当前分支以芯片展示,刷新 / 获取 / 拉取 / 推送按钮右置;打开面板自动选中当前会话的工作区,切换会话后面板跟随;首次载入期间显示进度文案,日常的暂存刷新不再打扰。
-- **中英双语**:全部界面文案(含右侧边栏 guide 条目的标题与描述、菜单、对话框、操作提示)经 DSH locale 服务(`gitPanel` 命名空间)输出,跟随客户端语言设置实时切换。
+- **中英双语,两层各司其职**:面板内的全部界面文案(含右侧边栏 guide 条目的标题与描述、菜单、对话框、操作提示)收在 `client.js` 的 `en` / `zh` 词典里,经 DSH locale 服务(`gitPanel` 命名空间)输出,跟随客户端语言设置实时切换;插件列表里显示的**包名与描述**则由 `locale/{en,zh}.json` 提供 —— 那份元数据由 Host 在插件加载前读取(`readPluginMeta` 只认 `meta.title` / `meta.description`),此时浏览器半还没有运行,两边无法互相替代。
 - 全部样式为内联的**设计令牌样式**(`--dsw-alias-*` 变量 + 回退值),自动适配明暗两套主题;主按钮与 `HEAD` 标签使用主色淡化配色,深色模式下文字同样清晰;类名统一 `git-panel-` 前缀。样式表由渲染树里的 `StyleTag` 挂载,因此**每个会用到这些类名的挂载点都各自渲染一份**(主面板、右侧边栏兜底卡、插件页配置卡片)—— 漏掉一处,该处的规则会静默失效并退回页面默认排版。
 
 ### 插件配置
@@ -55,8 +55,23 @@
 |---|---|---|---|
 | `discoveryDepth` | number(1–8) | `3` | 仓库发现向下递归的目录层数 |
 | `wholeFileDiff` | boolean | `false` | 关闭:diff 只显示改动片段;开启:左右两栏显示整个文件(改动导航栏始终可用) |
+| `filePreviewFix` | boolean | `true` | 处理 `dsh-client-resources` 的 `protocolOf` 依赖 `new URL(address).hostname` 导致「文件资源服务不可用」的问题;关闭后地址解析完全交给浏览器 |
 
-配置项挂在**插件页面「已安装」分组中的 `GitPanel`** 上:打开该包即看到「仓库发现」与「差异显示」两组(与官方插件把自己的配置放在自己页面上的做法一致,占用的是 bundle 自己的配置位 `plugins.bundle.config`,而不是"官方"分组里的卡片)。卡片与内置设置页同构:分组标题 + 共享设置控件,`discoveryDepth` 用共享数值输入框,`wholeFileDiff` 用共享开关(标签行右侧)。两者的说明都收在标签旁的 ⓘ 按钮里,点击就地展开两段(做什么 / 取值与代价),排版完全一致;被覆盖的值显示徽标与「重置」。输入后按「保存」才提交给 Host,文档只读时表单会说明。两个字段都声明为 `volatile`,因此 Host 侧**即时生效、无需重启**:插件按调用读取实时配置值,保存后下一次扫描(或下一次打开 diff)就用新的值。配置卡片是独立于面板的挂载点,所以它自带本包样式表的副本,分组标题、开关行与两处 ⓘ 的排版都与内置设置页一致。
+配置项挂在**插件页面「已安装」分组中的 `GitPanel`** 上:打开该包即看到「仓库发现」「差异显示」「文件预览」三组(与官方插件把自己的配置放在自己页面上的做法一致,占用的是 bundle 自己的配置位 `plugins.bundle.config`,而不是"官方"分组里的卡片)。卡片与内置设置页同构:分组标题 + 共享设置控件,`discoveryDepth` 用共享数值输入框,`wholeFileDiff` 与 `filePreviewFix` 用共享开关(标签行右侧)。三者的说明都收在标签旁的 ⓘ 按钮里,点击就地展开两段(做什么 / 取值与代价),排版完全一致;被覆盖的值显示徽标与「重置」。输入后按「保存」才提交给 Host,文档只读时表单会说明。三个字段都声明为 `volatile`,因此**即时生效、无需重启**:Host 侧按调用读取实时配置值,浏览器半则订阅同一份设置文档,保存后立刻装上或卸下地址修复。配置卡片是独立于面板的挂载点,所以它自带本包样式表的副本,分组标题、开关行与三处 ⓘ 的排版都与内置设置页一致。
+
+#### 为什么需要 `filePreviewFix`
+
+右侧边栏的文件预览在部分浏览器上报「文件资源服务不可用」,根因在 DSH 上游并已记录在 [deepseek-ai/deepseek-harness discussion #6437](https://github.com/deepseek-ai/deepseek-harness/discussions/6437):`dsh-client-resources` 的 `protocolOf` 用 `new URL(address).hostname` 取协议键,而 Chromium 不把非特殊 scheme 的 authority 当作主机:
+
+```js
+new URL('dsh-resource://file/x').hostname   // Node / 规范:'file'   Chromium:''
+```
+
+于是**每个资源地址都解析不出协议**,没有任何提供方被要求打开内容,预览只剩那句错误文案。
+
+本插件的修复是**收窄到只改这一类地址**:把 `URL` 换成一个包装函数,只有 `dsh-resource://` 地址返回带正确 `hostname` 的视图,其余地址(包括 relative + base 的解析、被拒绝的非法地址)一律交回浏览器自身的实现。因此它**跨引擎同构**:在 Node/jsdom 上原生结果本就正确,包装后结果不变;在 Chromium 上补齐缺失的主机。它**不是上游修复的替代品** —— 上游改了 `protocolOf` 之后可直接把本项关闭(或保持开启,行为一致)。
+
+实现代价如实记录:资源地址返回的是包装视图,因此这类地址**不是 `instanceof URL`**,就地改写其中一个部件也不会回写整条地址(资源地址只被读取、从不被改写,面板里没有这种用法)。关闭开关会立即卸下包装并还原浏览器解析器;插件被卸载时同样还原。
 
 配置声明是零依赖手写的 schemastery 兼容图(`~standard.validate` + `{uid, refs}` 的 `toJSON`),Host 与设置表单都把它当作原生 schemastery 图投影;越界值在配置期即被拒绝,运行时读到的值始终夹取到 1–8。
 
@@ -81,8 +96,8 @@
 | `client.js` | 浏览器半:Git 面板与 launcher UI,以及本包在插件页面上的配置入口(`plugins.bundle.config`);注入 `slots`、`sidebarRightTabs`、`layout`、`configForms`;仅通过 `/api/local-git` 与 Host 交互 |
 | `cordis.patch.yml` | bundle 补丁层:把 Host 半以服务 id `GitPanel` 插入组合 |
 | `package.json` | `dsh.manifestVersion: 1`;client 平台 `web`,依赖 `@deepseek-ai/dsh-client-ui-sidebar-right`、`@deepseek-ai/dsh-client-ui-session`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-ui-primitives`;导出映射与 `files` 白名单 |
-| `locale/*.json` | `meta` 标题与描述的中英文案 |
-| `test/*` | 三个无框架 Node 测试(见[开发](#开发)) |
+| `locale/*.json` | 插件卡片(插件列表与清单)的包名与描述:Host 在加载插件前读取,只认 `meta.title` / `meta.description`;面板内的界面文案不在这里 |
+| `test/*` | 四个无框架 Node 测试(见[开发](#开发)) |
 
 ### 通信协议
 
@@ -171,19 +186,22 @@ POST /api/local-git
 - 左侧**面板栏**出现 Git 图标,进入全页三栏 Git 面板;
 - **右侧边栏**的 guide 胶囊里也有 Git:点击即**打开全页面板并关掉那张标签页**,所以回到会话后右侧边栏不会残留 Git 标签页;
 - 顶栏常显**工作区目录**与**仓库**字段(下拉可切换),当前分支以芯片展示;面板打开时自动选中当前会话所在的工作区。
-- 插件页面「已安装」分组里的 **`GitPanel`** 打开即见 **「仓库发现」** 与 **「差异显示」** 两组配置;输入后按保存写入 profile 配置,即时生效。
+- 插件页面「已安装」分组里的 **`GitPanel`** 打开即见 **「仓库发现」**、**「差异显示」** 与 **「文件预览」** 三组配置;输入后按保存写入 profile 配置,即时生效。
 
 ---
 
 ## 开发
 
-无需安装任何依赖,Node(建议 ≥ 18,测试依赖内置 `fetch`/`Request`)与 `git` 即可。三个测试互相独立,全部通过退出码 0 报告:
+无需安装任何依赖,Node(建议 ≥ 18,测试依赖内置 `fetch`/`Request`)与 `git` 即可。四个测试互相独立,全部通过退出码 0 报告:
 
 ```sh
 node test/host.e2e.mjs      # Host 半端到端:临时工作区 + 真实 git 子进程 + 裸仓库远程,覆盖全部操作与安全拒绝
 node test/client.smoke.mjs  # 浏览器半冒烟:真实 ModuleLoader 契约 + React 替身 + 假 fetch,驱动面板全部状态
+node test/preview-fix.mjs   # 文件预览修复:Node 侧校验修复契约,并在真实无头 Chromium 里复现缺陷与修复
 node test/preview.mjs       # 视觉稿:在临时仓库上渲染真实组件,输出 preview/git-panel.html(明暗双主题 × 面板 / 紧凑 diff 弹窗 / 整文件 diff 弹窗,共 6 幅)
 ```
+
+`test/preview-fix.mjs` 的第二半需要机器上装有 Chrome / Edge / Chromium:那个缺陷只在 Chromium 的解析器上出现,只有它能把"修复前无效、修复后有效"真正跑一遍。找不到浏览器时该半跳过(`skip`)而不是失败,Node 半始终运行。
 
 调试用环境变量:
 
@@ -224,15 +242,16 @@ dsh-GitPanel/                             # 插件包 GitPanel(仓库根即包�
 ├─ package.json                          # bundle 清单(manifestVersion 1、导出映射、files 白名单)
 ├─ cordis.patch.yml                      # Host 半的插入补丁
 ├─ index.js                              # Host 半:发现 / git 子进程 / 解析器 / 路由
-├─ client.js                             # 浏览器半:面板 UI、菜单、对话框、样式
+├─ client.js                             # 浏览器半:面板 UI、菜单、对话框、样式、资源地址修复
 ├─ icon.svg                              # 面板图标
 ├─ README.md / LICENSE / AGENTS.md
 ├─ locale/
-│  ├─ en.json                            # meta 文案(英)
-│  └─ zh.json                            # meta 文案(中)
+│  ├─ en.json                            # 插件卡片的包名与描述(英)
+│  └─ zh.json                            # 插件卡片的包名与描述(中)
 └─ test/
    ├─ host.e2e.mjs                       # Host 端到端测试
    ├─ client.smoke.mjs                   # 浏览器半渲染冒烟测试
+   ├─ preview-fix.mjs                    # 文件预览修复(Node + 真实 Chromium)
    └─ preview.mjs                        # 双主题视觉稿生成器
 ```
 

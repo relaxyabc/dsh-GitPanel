@@ -97,6 +97,33 @@ check(route !== null, 'the plugin registers one Fetch route')
 check(route?.path === '/api/local-git', 'the route lives under /api', route?.path)
 check(Array.isArray(route?.methods) && route.methods.includes('POST'), 'the route answers POST')
 
+// ---- manifest and locales --------------------------------------------------------
+// Display metadata has exactly one home. `readPluginMeta` reads locale/*.json and
+// falls back to package.json name/description — never to a package.json `meta`, so a
+// second copy there could only drift from the strings DSH actually shows.
+console.log('\nmanifest and locales')
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const englishLocale = JSON.parse(readFileSync(new URL('../locale/en.json', import.meta.url), 'utf8'))
+const chineseLocale = JSON.parse(readFileSync(new URL('../locale/zh.json', import.meta.url), 'utf8'))
+check(manifest.meta === undefined, 'the plugin card text lives in locale/*.json, not package.json meta', manifest.meta)
+check(
+  Object.keys(englishLocale).join() === 'meta' && Object.keys(chineseLocale).join() === 'meta',
+  'each locale file carries only meta, the one key DSH reads',
+  { en: Object.keys(englishLocale), zh: Object.keys(chineseLocale) },
+)
+const metaFields = Object.keys(englishLocale.meta ?? {}).sort().join()
+check(metaFields === 'description,title', 'a locale file declares exactly the two display fields', metaFields)
+check(
+  JSON.stringify(Object.keys(englishLocale.meta ?? {}).sort()) === JSON.stringify(Object.keys(chineseLocale.meta ?? {}).sort()),
+  'en and zh declare the same display fields',
+  { en: Object.keys(englishLocale.meta ?? {}), zh: Object.keys(chineseLocale.meta ?? {}) },
+)
+check(
+  manifest.files?.includes('locale/*.json') === true && manifest.exports?.['./locale/*.json'] === './locale/*.json',
+  'the locale files ship and resolve through the export map',
+  { files: manifest.files, exports: manifest.exports },
+)
+
 /**
  * Call one operation through the registered route.
  * @param {string} op - operation name.
@@ -234,6 +261,21 @@ try {
   check(wholeString.value?.wholeFileDiff === true, 'a boolean string is accepted', wholeString)
   const wholeBogus = Config['~standard'].validate({ wholeFileDiff: 'maybe' })
   check(Array.isArray(wholeBogus.issues) && wholeBogus.issues.length > 0, 'a non-boolean switch is refused', wholeBogus)
+  check(Config.dict?.filePreviewFix?.type === 'boolean', 'the schema carries the file-preview repair', Config.dict)
+  check(filled.value?.filePreviewFix === true, 'the file-preview repair defaults to on', filled)
+  check(Config.dict?.filePreviewFix?.meta?.volatile === true, 'the file-preview repair is editable without re-applying the plugin', Config.dict?.filePreviewFix?.meta)
+  const previewOff = Config['~standard'].validate({ filePreviewFix: false })
+  check(previewOff.value?.filePreviewFix === false, 'the file-preview repair accepts being turned off', previewOff)
+  const previewString = Config['~standard'].validate({ filePreviewFix: 'false' })
+  check(previewString.value?.filePreviewFix === false, 'a boolean string turns the repair off too', previewString)
+  const previewBogus = Config['~standard'].validate({ filePreviewFix: 'maybe' })
+  check(Array.isArray(previewBogus.issues) && previewBogus.issues.length > 0, 'a non-boolean repair value is refused', previewBogus)
+  const projected = Config.toJSON()
+  check(
+    projected?.refs !== undefined && Object.values(projected.refs).some((node) => node?.dict?.filePreviewFix !== undefined),
+    'the serialized graph carries the repair field for the settings page',
+    Object.keys(projected?.refs ?? {}).length,
+  )
 
   // ---- state -------------------------------------------------------------------
   console.log('\nstate')

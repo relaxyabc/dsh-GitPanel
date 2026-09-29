@@ -434,8 +434,10 @@ function answerFor(request) {
 }
 
 const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+const nativeUrl = globalThis.URL
 new Function('window', 'require', 'fetch', source)(globalThis.window, globalThis.require, trackedFetch)
 
+console.log('\nmodule face')
 check(registration !== null, 'the bundle registers a module factory')
 check(registration?.id === 'GitPanel', 'the factory id is the package name', registration?.id)
 
@@ -459,32 +461,58 @@ let refusePanels = false
 let failClose = false
 
 /** The settings document the fake `configForms` service serves. */
-const settingsDocument = { status: 'ready', value: { discoveryDepth: 3 }, base: {}, user: {}, writable: true, revision: 1 }
+const settingsDocument = { status: 'ready', value: { discoveryDepth: 3, filePreviewFix: true }, base: {}, user: {}, writable: true, revision: 1 }
+
+/** The composition layer the fake Host resolves the document over: this plugin's schema defaults. */
+const settingsBase = { discoveryDepth: 3, filePreviewFix: true }
+
+/** The user layer the fake Host holds: only what a save wrote. */
+const settingsUser = {}
 
 /** Every write the settings card staged, in order. */
 const settingsWrites = []
 
+/** The one form controller per namespace the service hands out, as the real one does. */
+const settingsForms = {}
+
+/** Snapshot listeners the service notified, one per consumer that subscribed. */
+const settingsListeners = new Set()
+
 /** The `configForms` service stand-in: one namespace, served while its status says so. */
 const configFormsStub = {
-  get: (ns) => ({
-    getSnapshot: () => settingsDocument,
-    subscribe: () => () => {},
-    mutate: async (ops, revision) => {
-      settingsWrites.push({ ns, ops, revision })
-      for (const op of ops) {
-        if (op.op === 'set') {
-          settingsDocument.value = { ...settingsDocument.value, [op.path[0]]: op.value }
-          settingsDocument.user = { ...settingsDocument.user, [op.path[0]]: op.value }
-        } else {
-          const next = { ...settingsDocument.value }
-          delete next[op.path[0]]
-          settingsDocument.value = next
+  // Real deployments cache one controller per namespace, so both consumers —
+  // the panel's own settings watch and the Plugins page card — must observe the
+  // same object here too; a fresh one per call would hide the live edit path.
+  get: (ns) => {
+    settingsForms[ns] ??= {
+      getSnapshot: () => settingsDocument,
+      subscribe: (listener) => {
+        settingsListeners.add(listener)
+        return () => settingsListeners.delete(listener)
+      },
+      mutate: async (ops, revision) => {
+        settingsWrites.push({ ns, ops, revision })
+        for (const op of ops) {
+          if (op.op === 'set') {
+            settingsUser[op.path[0]] = op.value
+          } else {
+            delete settingsUser[op.path[0]]
+          }
         }
-      }
-      settingsDocument.revision = (settingsDocument.revision ?? 0) + 1
-      return true
-    },
-  }),
+        // A clear lets the field re-inherit the composition default, which is
+        // where `filePreviewFix` gets its `true` from — so the resolved section
+        // must be recomputed from the layers, not patched in place.
+        const resolved = { ...settingsBase, ...settingsUser }
+        for (const [key, value] of Object.entries(resolved)) if (value === undefined) delete resolved[key]
+        settingsDocument.value = resolved
+        settingsDocument.user = { ...settingsUser }
+        settingsDocument.revision = (settingsDocument.revision ?? 0) + 1
+        for (const listener of settingsListeners) listener()
+        return true
+      },
+    }
+    return settingsForms[ns]
+  },
   whileServed: (namespaces, register) => {
     if (namespaces.includes(settingsDocument.ns ?? 'GitPanel')) return register()
     return () => {}
@@ -540,7 +568,46 @@ clientModule.apply({
   },
 })
 
-console.log('\nregistration')
+console.log('\nresource addresses')
+/** The parser in force after the plugin applied, when the repair is on. */
+const patchedUrl = globalThis.URL
+check(typeof clientModule?.auditResourceAddress === 'function', 'the module exposes the address reader', Object.keys(clientModule ?? {}))
+check(clientModule?.auditResourceAddress('dsh-resource://file/x') === 'file', 'a file address names the file protocol', clientModule?.auditResourceAddress('dsh-resource://file/x'))
+check(clientModule?.auditResourceAddress('dsh-resource://file/session/s1/home/me/a.md') === 'file', 'a session-scoped file address names the file protocol')
+check(clientModule?.auditResourceAddress('DSH-RESOURCE://FILE/x') === 'file', 'the scheme and host are compared case-insensitively', clientModule?.auditResourceAddress('DSH-RESOURCE://FILE/x'))
+check(clientModule?.auditResourceAddress('dsh-resource://plan/session/s1/call') === 'plan', 'another protocol is read the same way')
+check(clientModule?.auditResourceAddress('dsh-resource://file?q=1') === 'file', 'a query ends the host', clientModule?.auditResourceAddress('dsh-resource://file?q=1'))
+check(clientModule?.auditResourceAddress('dsh-resource://file#frag') === 'file', 'a fragment ends the host', clientModule?.auditResourceAddress('dsh-resource://file#frag'))
+check(clientModule?.auditResourceAddress('dsh-resource://') === undefined, 'an address with no host names no protocol', clientModule?.auditResourceAddress('dsh-resource://'))
+check(clientModule?.auditResourceAddress('dsh-resource:///x') === undefined, 'an empty authority names no protocol', clientModule?.auditResourceAddress('dsh-resource:///x'))
+check(clientModule?.auditResourceAddress('sidebar://guide') === undefined, 'another scheme names no resource', clientModule?.auditResourceAddress('sidebar://guide'))
+check(clientModule?.auditResourceAddress(undefined) === undefined && clientModule?.auditResourceAddress(7) === undefined, 'a non-string address names no resource')
+check(patchedUrl !== nativeUrl, 'the browser half replaces the URL parser so resource addresses carry a host', patchedUrl?.name)
+// Chromium reports no host for this address; the repair is what the preview
+// needs, and Node's parser already agrees with the repaired answer.
+check(new globalThis.URL('dsh-resource://file/x').hostname === 'file', 'the patched parser reports the resource host', new globalThis.URL('dsh-resource://file/x').hostname)
+check(new globalThis.URL('dsh-resource://FILE/x').hostname === 'file', 'the patched parser lower-cases the host', new globalThis.URL('dsh-resource://FILE/x').hostname)
+check(new globalThis.URL('dsh-resource://file/x').protocol === 'dsh-resource:', 'the patched parser keeps the scheme')
+check(new globalThis.URL('dsh-resource://file/session/s1/a.md').pathname === '/session/s1/a.md', 'the parsed address still carries its path', new globalThis.URL('dsh-resource://file/session/s1/a.md').pathname)
+check(new globalThis.URL('dsh-resource://file/x').href === 'dsh-resource://file/x', 'the parsed address still stringifies to what came in', String(new globalThis.URL('dsh-resource://file/x')))
+check(Object.prototype.toString.call(new globalThis.URL('dsh-resource://file/x')) === '[object URL]', 'the parsed address still reports itself as a URL')
+check(new globalThis.URL('https://example.com/x').hostname === 'example.com', 'every other address is untouched', new globalThis.URL('https://example.com/x').hostname)
+check(new globalThis.URL('https://example.com/x') instanceof nativeUrl, 'an ordinary address is still a native URL')
+check(new globalThis.URL('/x', 'https://example.com/a/b').href === 'https://example.com/x', 'the base argument still resolves', new globalThis.URL('/x', 'https://example.com/a/b').href)
+// The rest of the Web client reaches URL statics through this same global —
+// blob URLs are how attachments and document renderers carry their bytes — so
+// the wrapper must leave every one of them reachable.
+check(typeof globalThis.URL.createObjectURL === 'function' && typeof globalThis.URL.revokeObjectURL === 'function', 'the URL statics the client uses survive the wrapper')
+check(typeof globalThis.URL.parse !== 'function' || globalThis.URL.parse('https://example.com/x').href === 'https://example.com/x', 'a static address parser still answers for an ordinary address')
+let unsupportedAddressFailed = false
+try {
+  new globalThis.URL('not a url')
+} catch {
+  unsupportedAddressFailed = true
+}
+check(unsupportedAddressFailed, 'an address the parser rejects still throws')
+
+console.log('\nregistrations')
 check(captured.main.length === 1, 'a main panel is registered', captured.main.length)
 check(captured.main[0]?.options?.key === 'git', 'the main panel key is git', captured.main[0]?.options?.key)
 check(captured.panels.length === 1, 'a sidebar panel entry is registered', captured.panels.length)
@@ -661,6 +728,17 @@ function findAll(node, predicate, bucket = []) {
   if (node.props !== undefined && predicate(node)) bucket.push(node)
   for (const child of node.children ?? []) findAll(child, predicate, bucket)
   return bucket
+}
+
+/**
+ * Find one settings switch by the label it announces.
+ *
+ * @param {object} tree - element tree.
+ * @param {string} label - the switch's accessible label.
+ * @returns {object|undefined} the switch element.
+ */
+function switchByLabel(tree, label) {
+  return find(tree, (element) => element.props?.role === 'switch' && element.props?.['aria-label'] === label)
 }
 
 /**
@@ -844,10 +922,10 @@ check(
   'the panel itself no longer carries a depth control',
   findAll(view.tree, (element) => element.type === 'select').map((element) => collectText(element)),
 )
-const wholeToggle = find(staged.tree, (element) => element.props?.role === 'switch')
+const wholeToggle = switchByLabel(staged.tree, 'Whole-file diff')
 check(wholeToggle !== undefined, 'the card renders the whole-file switch', collectText(staged.tree).slice(-4))
 check(wholeToggle?.props?.['aria-checked'] === 'false', 'the whole-file switch starts off', wholeToggle?.props)
-const toggleHelpButton = find(staged.tree, (element) => element.props?.className === 'git-panel-config-help-button')
+const toggleHelpButton = find(staged.tree, (element) => element.props?.['aria-controls'] === 'GitPanel-whole-file-help')
 check(toggleHelpButton?.props?.['aria-label'] === 'About the whole-file diff', 'the switch row names its explanation button', toggleHelpButton?.props)
 check(toggleHelpButton?.props?.['aria-controls'] === 'GitPanel-whole-file-help', 'the explanation button points at its region', toggleHelpButton?.props)
 check(!collectText(staged.tree).some((entry) => entry.includes('Off: only the changed hunks')), 'the switch row explains nothing until it is asked to', collectText(staged.tree).slice(-4))
@@ -866,7 +944,7 @@ check(
 )
 wholeToggle?.props?.onClick?.()
 const toggled = await settle(helpShown)
-const onToggle = find(toggled.tree, (element) => element.props?.role === 'switch')
+const onToggle = switchByLabel(toggled.tree, 'Whole-file diff')
 check(onToggle?.props?.['aria-checked'] === 'true', 'clicking the switch stages the on state', onToggle?.props)
 check(collectText(toggled.tree).includes('modified'), 'a staged edit previews the override badge', collectText(toggled.tree).slice(-6))
 settingsWrites.length = 0
@@ -880,7 +958,7 @@ check(
 settingsWrites.length = 0
 cardFace.resetField('wholeFileDiff')
 const resetView = await settle(toggled)
-const resetToggle = find(resetView.tree, (element) => element.props?.role === 'switch')
+const resetToggle = switchByLabel(resetView.tree, 'Whole-file diff')
 check(resetToggle?.props?.['aria-checked'] === 'false', 'a cleared whole-file draft shows the inherited default', resetToggle?.props)
 find(resetView.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
 await drain()
@@ -889,6 +967,86 @@ check(
   'resetting the whole-file switch clears the override',
   settingsWrites,
 )
+
+console.log('\nfile-preview repair setting')
+const previewToggle = switchByLabel(resetView.tree, 'Repair file-preview addresses')
+check(previewToggle !== undefined, 'the card renders the file-preview switch', collectText(resetView.tree).slice(-6))
+check(previewToggle?.props?.['aria-checked'] === 'true', 'the repair starts on, as its default says', previewToggle?.props)
+check(
+  collectText(resetView.tree).includes('File preview'),
+  'the repair is grouped under its own heading',
+  collectText(resetView.tree).slice(0, 10),
+)
+const previewHelpButton = find(resetView.tree, (element) => element.props?.['aria-controls'] === 'GitPanel-file-preview-help')
+check(previewHelpButton?.props?.['aria-label'] === 'About the file-preview repair', 'the repair row names its explanation button', previewHelpButton?.props)
+check(!collectText(resetView.tree).some((entry) => entry.includes('protocolOf')), 'the repair explains nothing until it is asked to', collectText(resetView.tree).slice(-4))
+previewHelpButton?.props?.onClick?.()
+const previewHelpShown = await settle(resetView)
+const previewHelpText = collectText(previewHelpShown.tree).join('\n')
+check(
+  previewHelpText.includes('protocolOf') && previewHelpText.includes('new URL(address).hostname') && previewHelpText.includes('discussions/6437'),
+  'the explanation button names the upstream cause and links it',
+  previewHelpText.slice(-400),
+)
+check(
+  find(previewHelpShown.tree, (element) => element.props?.id === 'GitPanel-file-preview-help')?.props?.role === 'region',
+  'the revealed repair rules are a labelled region',
+  collectText(previewHelpShown.tree).slice(-8),
+)
+settingsWrites.length = 0
+switchByLabel(previewHelpShown.tree, 'Repair file-preview addresses')?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 0,
+  'turning the repair off stages the edit instead of writing it at once',
+  settingsWrites,
+)
+const previewOn = await settle(previewHelpShown)
+check(
+  switchByLabel(previewOn.tree, 'Repair file-preview addresses')?.props?.['aria-checked'] === 'false',
+  'the staged off state is what the switch shows',
+  switchByLabel(previewOn.tree, 'Repair file-preview addresses')?.props,
+)
+settingsWrites.length = 0
+find(previewOn.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ns === 'GitPanel' && settingsWrites[0].ops[0]?.op === 'set' && settingsWrites[0].ops[0]?.path?.[0] === 'filePreviewFix' && settingsWrites[0].ops[0]?.value === false,
+  'saving writes the repair switch as a boolean',
+  settingsWrites,
+)
+// The panel plugin watches this same namespace, so the write the card just
+// landed reaches the live repair too — the path a user actually takes.
+check(
+  globalThis.URL === nativeUrl,
+  'a saved off value removes the repair from the running page',
+  globalThis.URL === nativeUrl,
+)
+settingsWrites.length = 0
+cardFace.edit('filePreviewFix', 'true')
+find((await settle(previewOn)).tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  globalThis.URL !== nativeUrl && new globalThis.URL('dsh-resource://file/x').hostname === 'file',
+  'turning the repair back on restores it without a reload',
+  settingsWrites,
+)
+cardFace.resetField('filePreviewFix')
+const previewReset = await settle(previewOn)
+settingsWrites.length = 0
+find(previewReset.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ops[0]?.op === 'unset' && settingsWrites[0].ops[0]?.path?.[0] === 'filePreviewFix',
+  'resetting the repair switch clears the override, so its default returns',
+  settingsWrites,
+)
+check(
+  globalThis.URL !== nativeUrl && new globalThis.URL('dsh-resource://file/x').hostname === 'file',
+  'a cleared repair override leaves the repair on, as the default says',
+  globalThis.URL === nativeUrl,
+)
+
 const invalidCard = await render(cardComponent, { ...cardProps, view: 'page' })
 const invalidInput = find(invalidCard.tree, (element) => element.props?.id === 'GitPanel-discovery-depth')
 invalidInput?.props?.onChange?.({ target: { value: 'deep' } })

@@ -1372,8 +1372,29 @@ const WHOLE_FILE_DIFF_NODE = makeSchemaNode({
 })
 
 /**
- * The plugin configuration schema: the live discovery depth and whole-file diff
- * switch.
+ * The `filePreviewFix` field: editable live, applied to the browser half's
+ * resource-address hook.
+ *
+ * The default is on because the condition it compensates for — a browser whose
+ * URL parser drops the host of a non-special URL scheme — breaks file preview
+ * out of the box, and a fix that has to be found and switched on first fixes
+ * nothing.
+ */
+const FILE_PREVIEW_FIX_NODE = makeSchemaNode({
+  type: 'boolean',
+  meta: {
+    default: true,
+    volatile: true,
+    description: {
+      '': 'Compensates for dsh-client-resources reading protocolOf from new URL(address).hostname, which makes the file preview report that the resource service is unavailable. See https://github.com/deepseek-ai/deepseek-harness/discussions/6437.',
+      zh: '处理 dsh-client-resources 的 protocolOf 依赖 new URL(address).hostname,导致文件预览报「文件资源服务不可用」的问题。参考 https://github.com/deepseek-ai/deepseek-harness/discussions/6437。',
+    },
+  },
+})
+
+/**
+ * The plugin configuration schema: the live discovery depth, whole-file diff
+ * switch, and file-preview fix.
  *
  * Hand-built to stay dependency-free; the shape mirrors schemastery's own wire
  * protocol so the Host treats it as a native graph.
@@ -1381,14 +1402,14 @@ const WHOLE_FILE_DIFF_NODE = makeSchemaNode({
 export const Config = makeSchemaNode({
   type: 'object',
   meta: {},
-  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE, wholeFileDiff: WHOLE_FILE_DIFF_NODE },
+  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE, wholeFileDiff: WHOLE_FILE_DIFF_NODE, filePreviewFix: FILE_PREVIEW_FIX_NODE },
 })
 
 /**
  * Register the operation route and apply the plugin configuration.
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
- * @param {{ discoveryDepth?: number, wholeFileDiff?: boolean }} [config] - the validated plugin configuration.
+ * @param {{ discoveryDepth?: number, wholeFileDiff?: boolean, filePreviewFix?: boolean }} [config] - the validated plugin configuration.
  */
 export function apply(ctx, config) {
   settings.config = config ?? null
