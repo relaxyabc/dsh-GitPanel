@@ -356,13 +356,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-
-
-
-
-
-
-
     /** Required browser services: slots for every seat, the tab registry, the right-Sidebar controller, layout, locale, and the shared configuration forms. */
     const inject = ['slots', 'sidebarRightTabs', 'sidebarRight', 'layout', 'locale', 'configForms']
 

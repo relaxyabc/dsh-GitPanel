@@ -114,6 +114,7 @@ window.__ModuleLoader__.load({ id: 'GitPanel', chunk: 'client.panel.js', factory
 - **只能异步**:分片经 `/plugins/GitPanel/client.<名字>.js?rev=<当前版本>` 按需下发,因此 `apply` 是 `async` 的,且必须在注册任何席位之前把分片取回来(否则首屏可能渲染到还等着 bundle 的组件)。
 - **只向一侧依赖**:分片之间不互相 import,依赖关系全部由 `client.js` 的 `shared` 表显式接线;分片自己声明它要用到的名字,一个分片读了没接线的东西就是 `ReferenceError`,冒烟测试会当场报出来。
 - **每个文件都要登记**:`package.json` 的 `files` 用 `client.*.js` 一次性覆盖。
+- **分片 URL 只带包级版本**:DSH 按 `client.js` 的 mtime/ctime/size 算出包级 rev,分片经 `/plugins/GitPanel/client.<名字>.js?rev=<该 rev>` 下发并带 `immutable` 缓存。因此**只改分片**时 URL 不变,浏览器会拿住旧分片 —— 改分片后请**硬刷新**(Ctrl+Shift+R),或顺手动一下 `client.js`,或重启 DSH;改 `client.js` 本身则会换掉全部 rev。
 - 资源地址修复仍然是**第一个**被接线的东西:它先于其它分片取回并装上,以保证页面解析任何资源地址之前它已经在位。
 
 ### 通信协议
