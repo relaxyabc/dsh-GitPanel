@@ -19,7 +19,6 @@
 
    ```sh
    dsh plugin --profile <name> add github:relaxyabc/dsh-GitPanel    # 从 GitHub(公开仓库,默认分支 main)
-   dsh plugin --profile <name> add E:\owner\dsh-GitPanel            # 或:开发本仓库时直接装本地路径
    ```
 
    GitHub 形式装的是**拷贝**,升级用 `dsh plugin --profile <name> update GitPanel` 重新解析(要固定版本就写 `github:relaxyabc/dsh-GitPanel#v0.2.0` 或 `#<commit>`);本地路径形式装的是**指向仓库的链接**,改完代码重启即生效,适合边改边用。
