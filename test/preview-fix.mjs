@@ -160,6 +160,11 @@ const clientModule = moduleLoader.loadEntry()
 check(moduleLoader.registered().includes('client.js'), 'the browser half registers through the module-loader contract', moduleLoader.registered())
 const audit = clientModule.auditResourceAddress
 check(typeof audit === 'function', 'the module exposes the address reader', Object.keys(clientModule ?? {}))
+// The reader belongs to the repair's chunk, so it answers once apply has wired
+// that chunk; the address cases are asserted below, right after the first apply.
+check(audit('dsh-resource://file/x') === undefined, 'the exported reader is silent until the repair is wired', audit('dsh-resource://file/x'))
+
+const first = await applyClient({ filePreviewFix: true })
 check(audit('dsh-resource://file/x') === 'file', 'a file address names the file protocol', audit('dsh-resource://file/x'))
 check(audit('dsh-resource://file/session/s1/home/me/a.md') === 'file', 'a session-scoped address names the file protocol')
 check(audit('DSH-RESOURCE://FILE/x') === 'file', 'the scheme and host are compared case-insensitively', audit('DSH-RESOURCE://FILE/x'))
@@ -167,7 +172,6 @@ check(audit('dsh-resource://file?q=1') === 'file' && audit('dsh-resource://file#
 check(audit('dsh-resource://') === undefined && audit('dsh-resource:///x') === undefined, 'an address with no host names no protocol', [audit('dsh-resource://'), audit('dsh-resource:///x')])
 check(audit('sidebar://guide') === undefined && audit(undefined) === undefined && audit(7) === undefined, 'anything else names no protocol')
 
-const first = await applyClient({ filePreviewFix: true })
 check(first.labels.some((label) => label.includes('file-preview')), 'applying the plugin watches the repair setting', first.labels)
 check(globalThis.URL !== nativeUrl, 'applying the plugin replaces the parser', globalThis.URL?.name)
 check(protocolOf('dsh-resource://file/x') === 'file', 'the unmodified reader now resolves the resource protocol')

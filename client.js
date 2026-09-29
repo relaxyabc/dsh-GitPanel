@@ -69,9 +69,6 @@ window.__ModuleLoader__.load({
     /** Element id of the file-preview fix's disclosure region, so its button points at it. */
     const FILE_PREVIEW_HELP_ID = 'GitPanel-file-preview-help'
 
-    /** The address scheme the client's resource model serves, `<type>` naming a provider. */
-    const RESOURCE_SCHEME = 'dsh-resource:'
-
     /** The resource address prefix whose host is compared case-insensitively, as the parser does. */
     const RESOURCE_PREFIX = 'dsh-resource://'
 
@@ -105,6 +102,12 @@ window.__ModuleLoader__.load({
      * loses only the settings card instead of the whole tool.
      */
     let primitives = null
+
+    /**
+     * The repair's address reader, bound when the repair's chunk is wired during
+     * apply. Until then the page has no repair, so no address names a protocol.
+     */
+    let resourceProtocolOf = () => undefined
 
     /** Glyphs spelled as escapes so no encoding can mangle them. */
     const CARET_OPEN = '\u25be'
@@ -178,228 +181,6 @@ window.__ModuleLoader__.load({
       return failureText(error).includes('unknown operation')
     }
 
-    /**
-     * The protocol key of one address, read without the URL parser.
-     *
-     * The client's resource model names a provider by the host of a
-     * `dsh-resource://<type>/…` address and reads that host with `new
-     * URL(address).hostname`. Chromium's URL parser never treats a non-special
-     * scheme's authority as a host — `new URL('dsh-resource://file/x').hostname`
-     * is `''` there, while Node and the specification say `'file'` — so on the
-     * affected browsers every resource address resolves to no protocol at all,
-     * the sidebar reports that the file resource service is unavailable, and no
-     * provider ever opens. This reads the same host out of the string instead,
-     * which is what the upstream fix does.
-     *
-     * @param {unknown} address - the address to read.
-     * @returns {string|undefined} the lower-cased protocol key, or undefined when the string is not a resource address with a host.
-     */
-    function resourceProtocolOf(address) {
-      if (typeof address !== 'string') return undefined
-      if (address.slice(0, RESOURCE_PREFIX.length).toLowerCase() !== RESOURCE_PREFIX) return undefined
-      const rest = address.slice(RESOURCE_PREFIX.length)
-      const end = rest.search(/[/?#]/)
-      const host = end === -1 ? rest : rest.slice(0, end)
-      return host === '' ? undefined : host.toLowerCase()
-    }
-
-    /**
-     * The file-preview fix's plugin state.
-     *
-     * `URL` is replaced with a wrapper so every later `new URL(...)` in the page
-     * reads a resource address the way the specification says. `native` is the
-     * parser that wrapper replaced — restored by identity, never by prototype,
-     * because the wrapper is an ordinary function whose prototype is
-     * `Function.prototype`. `value` is the setting's draft text, `undefined`
-     * meaning the Host has not answered yet and the documented default (on)
-     * applies.
-     */
-    const filePreview = { value: undefined, cached: null, native: null }
-
-    /**
-     * The configuration-service snapshot's answer for one field.
-     *
-     * `value` carries the Host's resolved section, so it arrives as a plain
-     * value; a live reference is unwrapped anyway, because a volatile field is
-     * exactly the kind whose stored shape can differ from its resolved one.
-     *
-     * @param {object} snapshot - the settings namespace snapshot.
-     * @param {string} field - the field to read.
-     * @returns {unknown} the resolved value, or undefined when the Host has said nothing.
-     */
-    function settingsValue(snapshot, field) {
-      const section = snapshot?.value
-      if (section === null || typeof section !== 'object') return undefined
-      const value = section[field]
-      if (value !== null && typeof value === 'object' && typeof value.get === 'function') return value.get()
-      return value
-    }
-
-    /**
-     * Whether the file-preview fix is in force right now.
-     *
-     * Only an explicit `false` turns it off: the default is on, and a
-     * deployment that never served the field, a client that has not read the
-     * settings document yet, or a stored value of the wrong shape all keep the
-     * breakage compensated instead of leaving the preview dead.
-     *
-     * @returns {boolean} whether the browser half should repair resource addresses.
-     */
-    function filePreviewFixEnabled() {
-      return filePreview.value !== 'false'
-    }
-
-    /**
-     * Install the URL wrapper that reports resource addresses correctly.
-     *
-     * The wrapper is deliberately narrow: only `dsh-resource://` addresses
-     * return the view, and every other address — including the ones a page
-     * parses while this is installed — goes to the URL implementation itself,
-     * unchanged. A browser whose parser already reports the host (Node, jsdom)
-     * is unaffected for the same reason, which is what makes this
-     * engine-independent, and no substitute for the upstream fix.
-     *
-     * A resource address cannot simply be a `URL` subclass that assigns
-     * `hostname`: Chromium's URL is an exotic object whose parts are
-     * unforgeable, and there the assignment is silently dropped for a
-     * non-special scheme while every native method invoked through the subclass
-     * still works. The view is therefore a wrapper that answers the parts the
-     * repair is about and forwards everything else, which costs one thing
-     * worth naming: such an address is not `instanceof URL`, and mutating one
-     * of its parts does not rewrite it. Resource addresses are read, never
-     * rewritten, so neither is exercised.
-     *
-     * One consequence of replacing a global rather than a call site: the
-     * wrapper also stands in for the URL *constructor*, so its statics have to
-     * stay reachable — the client mints blob URLs for attachments and document
-     * renderers through this very global.
-     *
-     * @returns {boolean} whether the wrapper is in force after the call.
-     */
-    function installFilePreviewFix() {
-      if (filePreview.cached !== null) return true
-      try {
-        const NativeUrl = globalThis.URL
-        if (typeof NativeUrl !== 'function') return false
-        /**
-         * A `URL` that also knows the host of a resource address.
-         *
-         * Declared inside `installFilePreviewFix` so the parser it forwards to
-         * stays the constructor captured when the wrapper was installed, never
-         * a constructor this file introduced.
-         *
-         * @param {unknown} address - the address to parse.
-         * @param {unknown} base - an optional base address.
-         * @returns {object} the parsed address.
-         */
-        function ResourceAwareUrl(address, base) {
-          const host = resourceProtocolOf(address)
-          const parsed = base === undefined ? new NativeUrl(address) : new NativeUrl(address, base)
-          if (host === undefined) return parsed
-          const view = { hostname: host, host }
-          Object.setPrototypeOf(view, NativeUrl.prototype)
-          return new Proxy(view, {
-            /**
-             * Answer the resource host, then forward everything else.
-             *
-             * @param {object} target - the view.
-             * @param {string|symbol} property - the property read.
-             * @param {unknown} receiver - the proxy that received the read.
-             * @returns {unknown} the property value.
-             */
-            get(target, property, receiver) {
-              if (property === 'hostname' || property === 'host') return Reflect.get(target, property, receiver)
-              const value = Reflect.get(parsed, property, parsed)
-              // A native URL method is bound to the URL it came from: calling
-              // it with this proxy as `this` is an illegal invocation.
-              return typeof value === 'function' ? value.bind(parsed) : value
-            },
-            /**
-             * @param {object} target - the view.
-             * @param {string|symbol} property - the property asked about.
-             * @returns {boolean} whether the parsed address carries it.
-             */
-            has(target, property) {
-              return Reflect.has(target, property) || property in parsed
-            },
-          })
-        }
-        filePreview.native = NativeUrl
-        filePreview.cached = ResourceAwareUrl
-        // Inheriting from the URL constructor keeps every static the rest of
-        // the client reaches through this global — `createObjectURL`,
-        // `revokeObjectURL`, `parse` — without listing them, and keeps any
-        // static a future engine adds.
-        Object.setPrototypeOf(ResourceAwareUrl, NativeUrl)
-        globalThis.URL = ResourceAwareUrl
-        return true
-      } catch {
-        // An environment this cannot wrap keeps the parser it shipped with,
-        // which is exactly the state the setting's default already assumes.
-        filePreview.cached = null
-        filePreview.native = null
-        return false
-      }
-    }
-
-    /**
-     * Remove the URL wrapper again, restoring the parser the page shipped with.
-     *
-     * The parser is restored by identity rather than by walking the wrapper's
-     * prototype chain: the wrapper is an ordinary function, so its prototype is
-     * `Function.prototype` and that chain leads nowhere near a URL.
-     *
-     * @returns {void} nothing.
-     */
-    function uninstallFilePreviewFix() {
-      const patched = filePreview.cached
-      const original = filePreview.native
-      filePreview.cached = null
-      filePreview.native = null
-      if (patched === null || original === null) return
-      try {
-        if (globalThis.URL === patched) globalThis.URL = original
-      } catch {
-        // A page that froze `URL` keeps the wrapper; the setting is still
-        // honoured on the next load, where nothing is installed at all.
-      }
-    }
-
-    /**
-     * Follow the plugin's file-preview setting for the life of the plugin.
-     *
-     * The patch is installed unconditionally first and only removed once the
-     * Host says the setting is off. Gating the installation on a settings read
-     * would break the preview on every load that restores a document tab before
-     * the settings document arrives — the one ordering where the fix is needed
-     * and not yet known — so "unknown" resolves to the documented default while
-     * an explicit "off" still takes effect as soon as it is known.
-     *
-     * @param {object} ctx - the apply-scope client context.
-     * @returns {Function} the disposer ending the watch.
-     */
-    function watchFilePreviewFix(ctx) {
-      const form = ctx.configForms.get(SETTINGS_NS)
-      installFilePreviewFix()
-      /**
-       * Apply the latest answer; only a known setting ever changes the patch.
-       *
-       * @returns {void} nothing.
-       */
-      const sync = () => {
-        const value = settingsValue(form.getSnapshot(), FILE_PREVIEW_FIELD)
-        if (typeof value !== 'boolean') return
-        filePreview.value = String(value)
-        if (filePreviewFixEnabled()) installFilePreviewFix()
-        else uninstallFilePreviewFix()
-      }
-      const unsubscribe = form.subscribe(sync)
-      sync()
-      return () => {
-        unsubscribe()
-        uninstallFilePreviewFix()
-      }
-    }
 
     /**
      * I18n namespace. Every user-facing string lives in the `client.i18n.js`
@@ -458,38 +239,6 @@ window.__ModuleLoader__.load({
      */
     let hostContext = null
 
-    /**
-     * Select the full-page Git panel and reveal it.
-     *
-     * The layout service throws while the main key is not committed yet; the
-     * launcher's explicit button retries, so the failed transition stays quiet.
-     * A fullscreen right Sidebar covers the frame, so when the transition comes
-     * from a tab in that presentation the column is collapsed to reveal the
-     * panel.
-     *
-     * @param {object} [info] - the launcher's tab info, when forwarded from a tab.
-     * @returns {boolean} whether the panel was selected.
-     */
-    function openGitPanel(info) {
-      const layout = hostContext?.layout
-      if (layout === null || typeof layout?.selectPanel !== 'function') return false
-      try {
-        layout.selectPanel(PANEL_ID)
-      } catch {
-        return false
-      }
-      if (info?.sidebar?.fullscreen === true) {
-        const sidebar = hostContext?.sidebarRight
-        if (typeof sidebar?.isExpanded === 'function' && sidebar.isExpanded() && typeof sidebar?.toggleExpanded === 'function') {
-          try {
-            sidebar.toggleExpanded()
-          } catch {
-            // The sidebar's own chrome still collapses it.
-          }
-        }
-      }
-      return true
-    }
 
     /**
      * Pick the main-view Session's id from a sessions snapshot.
@@ -575,158 +324,14 @@ window.__ModuleLoader__.load({
       return parts[parts.length - 1] ?? path
     }
 
-    /** The token-only stylesheet: no Harness Client package is imported. */
-    const STYLES = [
-      '.git-panel{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-base,transparent)}',
-      '.git-panel *{box-sizing:border-box}',
-      '.git-panel-bar{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.git-panel-bar-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}',
-      // The bar pads by 12px, so the field is the 320px column minus that inset
-      // to keep the workspace dropdown's right edge on the branch column's edge.
-      '.git-panel-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:calc(320px - 12px)}',
-      '.git-panel-field-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-field .git-panel-select{width:100%;max-width:none;padding:3px 8px}',
-      '.git-panel-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
-      '.git-panel-branch-chip-glyph{display:inline-flex;color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-branch-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}',
-      '.git-panel-spacer{flex:1;min-width:4px}',
-      '.git-panel-select{max-width:260px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 6px;font:inherit;cursor:pointer}',
-      '.git-panel-input{border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 7px;font:inherit;min-width:0}',
-      '.git-panel-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 8px;font:inherit;cursor:pointer;white-space:nowrap}',
-      '.git-panel-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
-      '.git-panel-btn:disabled{opacity:.45;cursor:default}',
-      '.git-panel-btn-primary{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 26%,transparent)}',
-      '.git-panel-cols{flex:1;min-height:0;display:flex}',
-      '.git-panel-col{display:flex;flex-direction:column;min-height:0;min-width:0}',
-      '.git-panel-col-left{width:320px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.git-panel-col-mid{flex:1;min-width:220px}',
-      '.git-panel-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.git-panel-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
-      '.git-panel-pane-top{flex:1 1 46%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-pane-grow{flex:1}',
-      '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
-      '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
-      '.git-panel-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-row{display:flex;align-items:center;gap:7px;padding:3px 10px;cursor:default}',
-      '.git-panel-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
-      '.git-panel-row-sel,.git-panel-row-sel:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 18%,transparent)}',
-      '.git-panel-branch{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.git-panel-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px}',
-      '.git-panel-group{display:flex;align-items:center;gap:6px;width:100%;padding:5px 9px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left}',
-      '.git-panel-group:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08))}',
-      '.git-panel-caret{flex:none;width:10px;font-size:9px;opacity:.75}',
-      '.git-panel-tag{flex:none;padding:0 5px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 14%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-chip{flex:none;padding:0 5px;border-radius:3px;font-size:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16));color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-status{flex:none;width:14px;text-align:center;font-weight:700;font-size:11px;font-family:ui-monospace,monospace}',
-      '.git-panel-status-M{color:var(--dsw-alias-state-warn-primary,#9a6700)}',
-      '.git-panel-status-A{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-status-D{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-status-R{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-status-C{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-status-U{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-status-\\?{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-check{flex:none;width:14px;height:14px;accent-color:var(--dsw-alias-brand-primary,#0969da);cursor:pointer}',
-      '.git-panel-numstat{flex:none;display:flex;gap:4px;font-family:ui-monospace,monospace;font-size:10px}',
-      '.git-panel-plus{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-minus{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-commit{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}',
-      '.git-panel-commit-top{display:flex;align-items:center;gap:6px;min-width:0}',
-      '.git-panel-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.git-panel-meta{display:flex;gap:7px;overflow:hidden;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;white-space:nowrap}',
-      '.git-panel-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}',
-      '.git-panel-detail{flex:1 1 46%;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-detail-head{flex:none;padding:9px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-detail-subject{font-weight:600;font-size:13px;margin-bottom:5px;word-break:break-word}',
-      '.git-panel-detail-body{margin-top:6px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:11.5px}',
-      '.git-panel-kv-key{color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-kv-value{overflow:hidden;text-overflow:ellipsis;word-break:break-all}',
-      '.git-panel-msg{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
-      '.git-panel-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
-      '.git-panel-banner{margin:6px 10px;padding:6px 8px;border-radius:5px;word-break:break-word}',
-      '.git-panel-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-banner-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#9a6700) 14%,transparent);color:var(--dsw-alias-state-warn-primary,#9a6700)}',
-      '.git-panel-sbs-layout{flex:1;min-height:0;display:flex;align-items:stretch}',
-      '.git-panel-sbs-scroll{flex:1;min-width:0;min-height:0;overflow:auto}',
-      '.git-panel-sbs-wrap{display:flex;align-items:flex-start;min-height:100%}',
-      '.git-panel-sbs{flex:1;min-width:0;display:flex;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;tab-size:4}',
-      '.git-panel-sbs-nav{position:sticky;top:0;align-self:flex-start;flex:none;display:flex;flex-direction:column;width:54px;max-height:80vh;overflow:auto;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.git-panel-sbs-nav-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:2px;padding:2px 1px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
-      '.git-panel-sbs-nav-step{flex:none;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;padding:0;border:0;border-radius:3px;background:none;color:inherit;font:inherit;font-size:10px;cursor:pointer}',
-      '.git-panel-sbs-nav-step:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.24))}',
-      '.git-panel-sbs-nav-step:disabled{opacity:.35;cursor:default}',
-      '.git-panel-sbs-nav-count{flex:none;font-family:ui-monospace,monospace;font-size:9px;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-sbs-nav-item{display:flex;align-items:center;justify-content:flex-end;gap:3px;border:0;background:none;color:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.5;padding:1px 7px;cursor:pointer;white-space:nowrap}',
-      '.git-panel-sbs-nav-item:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
-      '.git-panel-sbs-nav-current,.git-panel-sbs-nav-current:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 24%,transparent)}',
-      '.git-panel-sbs-nav-add{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-sbs-nav-del{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-sbs-nav-change{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-sbs-overview{position:relative;flex:none;width:14px;overflow:hidden;cursor:pointer;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.git-panel-sbs-overview-view{position:absolute;left:0;right:0;border-radius:2px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.22));pointer-events:none}',
-      '.git-panel-sbs-mark{position:absolute;left:2px;right:2px;min-height:3px;padding:0;border:0;border-radius:2px;background:var(--dsw-alias-brand-primary,#0969da);cursor:pointer}',
-      '.git-panel-sbs-mark-add{background:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-sbs-mark-del{background:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-sbs-mark-change{background:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-sbs-mark-current{outline:1px solid var(--dsw-alias-label-primary,#1f2328)}',
-      '.git-panel-sbs-row{scroll-margin-top:26px}',
-      '.git-panel-sbs-columns{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24))}',
-      '.git-panel-sbs-column{padding:3px 9px;font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-sbs-hunk{padding:3px 9px;color:var(--dsw-alias-brand-primary,#0969da);background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05))}',
-      '.git-panel-sbs-row{display:grid;grid-template-columns:44px minmax(0,1fr) 44px minmax(0,1fr)}',
-      '.git-panel-sbs-no{padding:0 6px;text-align:right;color:var(--dsw-alias-label-secondary,#57606a);opacity:.7;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));user-select:none}',
-      '.git-panel-sbs-cell{padding:0 9px;white-space:pre-wrap;word-break:break-word;min-width:0}',
-      '.git-panel-sbs-del{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 14%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-sbs-add{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 14%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
-      '.git-panel-sbs-blank{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.09))}',
-      '.git-panel-ctx{position:fixed;z-index:90;min-width:230px;padding:4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 8px 28px rgba(0,0,0,.24);display:flex;flex-direction:column;gap:1px}',
-      '.git-panel-ctx-head{padding:4px 8px 5px;font-size:11px;color:var(--dsw-alias-label-secondary,#57606a);border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));margin-bottom:3px;word-break:break-all}',
-      '.git-panel-ctx-item{display:flex;align-items:center;gap:6px;width:100%;padding:4px 8px;border:0;border-radius:4px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-      '.git-panel-ctx-item:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
-      '.git-panel-ctx-item:disabled{opacity:.5;cursor:default}',
-      '.git-panel-ctx-sep{height:1px;margin:3px 0;background:var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.git-panel-scrim{position:fixed;inset:0;z-index:89}',
-      '.git-panel-dialog{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,90vw);display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3)}',
-      '.git-panel-dialog-title{font-weight:600}',
-      '.git-panel-dialog-actions{display:flex;justify-content:flex-end;gap:7px}',
-      '.git-panel-modal{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1180px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3);overflow:hidden}',
-      '.git-panel-modal-head{flex:none;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
-      '.git-panel-modal-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.git-panel-modal-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}',
-      '.git-panel-launch{display:flex;flex-direction:column;gap:10px;padding:14px}',
-      '.git-panel-launch-title{font-weight:600;font-size:13px}',
-      '.git-panel-launch-text{color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-launch-icon{color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-launch-actions{display:flex;margin-top:2px}',
-      // The configuration card mirrors the built-in settings pages: each group is
-      // a section with its own heading, and the controls are the shared field and
-      // switch primitives, whose own stylesheet the framework supplies.
-      '.git-panel-config-section{min-width:0;padding:16px 0}',
-      '.git-panel-config-heading{margin:0;font-size:13px;font-weight:600;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}',
-      '.git-panel-config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:16px}',
-      '.git-panel-config-toggle{display:grid;gap:6px;padding:12px 0}',
-      '.git-panel-config-toggle-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}',
-      '.git-panel-config-toggle-label{display:flex;align-items:center;gap:4px;flex:1;min-width:0}',
-      '.git-panel-config-badges{display:inline-flex;flex:none;align-items:center;gap:8px}',
-      '.git-panel-config-reset{padding:0;border:0;background:none;font:inherit;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#57606a);cursor:pointer}',
-      '.git-panel-config-reset:hover:not(:disabled){color:var(--dsw-alias-label-primary,#1f2328)}',
-      '.git-panel-config-reset:disabled{cursor:default}',
-      // The switch's info button and its disclosure copy the shared field's own
-      // rules, so both settings show the same control with the same type.
-      '.git-panel-config-help-button{display:inline-flex;flex:none;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:var(--dsw-alias-label-tertiary,#8b949e);cursor:pointer}',
-      '.git-panel-config-help-button:hover,.git-panel-config-help-button[aria-expanded="true"]{background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.1));color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-config-help-button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#0969da);outline-offset:1px}',
-      '.git-panel-config-help{padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,#57606a)}',
-      '.git-panel-config-help>p{margin:0}',
-      '.git-panel-config-help>p+p{margin-top:8px}',
-    ].join('\n')
+    /**
+     * The token-only stylesheet, delivered by the `client.style.js` chunk during
+     * apply and rendered by every mount that uses a `git-panel-*` class name.
+     */
+    let STYLES = ''
+
+    /** The Git folder glyph's path data, delivered with the stylesheet. */
+    let GIT_PATH = ''
 
     /**
      * The inline stylesheet.
@@ -736,10 +341,6 @@ window.__ModuleLoader__.load({
     function StyleTag() {
       return h('style', null, STYLES)
     }
-
-    /** The Git glyph path, shared by the rail, the guide capsule and the launcher. */
-    const GIT_PATH =
-      'M5.5 1a2.5 2.5 0 0 0-1 4.79V10.2a2.5 2.5 0 1 0 1 0V5.79A2.5 2.5 0 0 0 5.5 1Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm0 9.25a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm5.75-8.5a2.5 2.5 0 0 0-1 4.79v.46a3.25 3.25 0 0 1-3.25 3.25h-.4a2.5 2.5 0 1 0 0 1.5h.4a4.75 4.75 0 0 0 4.75-4.75v-.46a2.5 2.5 0 0 0-1-4.79Zm0 1.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z'
 
     /**
      * The Git glyph.
@@ -1343,233 +944,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /**
-     * The two paragraphs every settings explanation is made of.
-     *
-     * The first says what the setting does; the second states its bounds and
-     * what turning it on costs. Both fields use it, so their disclosures read
-     * the same whether the primitive draws them or the card does.
-     *
-     * @param {string} body - what the setting does.
-     * @param {string} note - its bounds and its cost.
-     * @returns {object} the disclosure's content.
-     */
-    function helpParagraphs(body, note) {
-      return h(React.Fragment, null, h('p', null, body), h('p', null, note))
-    }
-
-    /**
-     * The Git plugin's configuration card.
-     *
-     * The Plugins page renders a bundle's own configuration on that bundle's
-     * page, keyed by the package name, between its description and its rows — so
-     * this is what opening `GitPanel` in the installed group shows. The body
-     * is the shared settings form: it stages what the user types and writes it
-     * only on save, which is the page's own contract — the plugin never commits
-     * a value the user did not confirm.
-     *
-     * The controls are the shared ones the built-in settings pages use — the
-     * value field for the depth and the switch in a label row for the boolean —
-     * so this card reads as one more page of the same settings surface rather
-     * than a hand-drawn form.
-     *
-     * @param {object} props - the form snapshot and the form actions.
-     * @returns {object} the form.
-     */
-    function GitSettingsCard(props) {
-      const { t } = props
-      const state = props.useGitSettings((snapshot) => snapshot)
-      const [wholeFileHelp, setWholeFileHelp] = React.useState(false)
-      const [filePreviewHelp, setFilePreviewHelp] = React.useState(false)
-      // A cleared draft inherits the composition default (off), so the switch
-      // previews the value a save would leave rather than the raw draft text.
-      const wholeFile = state[WHOLE_FILE_FIELD].text === 'true'
-      // This field's composition default is the reverse: a cleared draft means
-      // the repair is on, so only the literal `false` reads as off.
-      const filePreview = state[FILE_PREVIEW_FIELD].text !== 'false'
-      return h(
-        primitives.SettingsForm,
-        {
-          labels: {
-            unavailable: t('settings.unavailable'),
-            readOnly: t('settings.readOnly'),
-            saveFailed: t('settings.saveFailed'),
-            save: t('settings.save'),
-            saving: t('settings.saving'),
-          },
-          state,
-          onSave: props.save,
-          onDiscard: props.discard,
-        },
-        // This card is a separate mount from the panel and the tab door, so it
-        // carries its own copy of the token-only stylesheet: without it none of
-        // the `git-panel-config-*` rules apply here and the card falls back to
-        // the surrounding page's type, which is exactly what made the two
-        // explanations disagree.
-        h(StyleTag, null),
-        h(
-          'section',
-          { className: 'git-panel-config-section', 'aria-labelledby': DISCOVERY_SECTION_ID },
-          h('h3', { className: 'git-panel-config-heading', id: DISCOVERY_SECTION_ID }, t('config.discovery')),
-          h(
-            'div',
-            { className: 'git-panel-config-grid' },
-            h(primitives.SettingsValueField, {
-              id: DEPTH_INPUT_ID,
-              label: t('depth'),
-              // The explanation lives behind the info button beside the label,
-              // the way the built-in settings pages disclose a field's rules.
-              help: { label: t('depth.help'), content: helpParagraphs(t('depth.help.body'), t('depth.help.note')) },
-              overriddenLabel: t('settings.overridden'),
-              resetLabel: t('settings.reset'),
-              invalidLabel: t('settings.invalidNumber'),
-              numeric: true,
-              disabled: state.writable !== true,
-              text: state[DEPTH_FIELD].text,
-              overridden: state[DEPTH_FIELD].overridden,
-              invalid: state[DEPTH_FIELD].invalid,
-              onEdit: (text) => props.edit(DEPTH_FIELD, text),
-              onReset: () => props.resetField(DEPTH_FIELD),
-            }),
-          ),
-        ),
-        h(
-          'section',
-          { className: 'git-panel-config-section', 'aria-labelledby': DISPLAY_SECTION_ID },
-          h('h3', { className: 'git-panel-config-heading', id: DISPLAY_SECTION_ID }, t('config.display')),
-          h(
-            'div',
-            { className: 'git-panel-config-toggle' },
-            h(
-              'div',
-              { className: 'git-panel-config-toggle-row' },
-              h(
-                'div',
-                { className: 'git-panel-config-toggle-label' },
-                h('span', null, t('wholeFileDiff')),
-                // A switch has no field primitive to draw its info button, so
-                // it is mirrored here: both settings disclose their rules the
-                // same way, in the same place, with the same type.
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'git-panel-config-help-button',
-                    'aria-label': t('wholeFileDiff.help'),
-                    'aria-expanded': wholeFileHelp,
-                    'aria-controls': WHOLE_FILE_HELP_ID,
-                    onClick: () => setWholeFileHelp(wholeFileHelp !== true),
-                  },
-                  h(primitives.IconInfoOutlineRegular, { size: 12 }),
-                ),
-              ),
-              state[WHOLE_FILE_FIELD].overridden
-                ? h(
-                    'span',
-                    { className: 'git-panel-config-badges' },
-                    h(primitives.Tag, { tone: 'neutral' }, t('settings.overridden')),
-                    h('button', { type: 'button', className: 'git-panel-config-reset', disabled: state.writable !== true, onClick: () => props.resetField(WHOLE_FILE_FIELD) }, t('settings.reset')),
-                  )
-                : null,
-              h(primitives.Switch, {
-                checked: wholeFile,
-                label: t('wholeFileDiff'),
-                disabled: state.writable !== true,
-                onChange: (next) => props.edit(WHOLE_FILE_FIELD, next === true ? 'true' : 'false'),
-              }),
-            ),
-            wholeFileHelp === true
-              ? h(
-                  'div',
-                  { id: WHOLE_FILE_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('wholeFileDiff.help') },
-                  helpParagraphs(t('wholeFileDiff.help.body'), t('wholeFileDiff.help.note')),
-                )
-              : null,
-          ),
-        ),
-        h(
-          'section',
-          { className: 'git-panel-config-section', 'aria-labelledby': FILE_PREVIEW_SECTION_ID },
-          h('h3', { className: 'git-panel-config-heading', id: FILE_PREVIEW_SECTION_ID }, t('config.preview')),
-          h(
-            'div',
-            { className: 'git-panel-config-toggle' },
-            h(
-              'div',
-              { className: 'git-panel-config-toggle-row' },
-              h(
-                'div',
-                { className: 'git-panel-config-toggle-label' },
-                h('span', null, t('filePreviewFix')),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'git-panel-config-help-button',
-                    'aria-label': t('filePreviewFix.help'),
-                    'aria-expanded': filePreviewHelp,
-                    'aria-controls': FILE_PREVIEW_HELP_ID,
-                    onClick: () => setFilePreviewHelp(filePreviewHelp !== true),
-                  },
-                  h(primitives.IconInfoOutlineRegular, { size: 12 }),
-                ),
-              ),
-              state[FILE_PREVIEW_FIELD].overridden
-                ? h(
-                    'span',
-                    { className: 'git-panel-config-badges' },
-                    h(primitives.Tag, { tone: 'neutral' }, t('settings.overridden')),
-                    h('button', { type: 'button', className: 'git-panel-config-reset', disabled: state.writable !== true, onClick: () => props.resetField(FILE_PREVIEW_FIELD) }, t('settings.reset')),
-                  )
-                : null,
-              h(primitives.Switch, {
-                checked: filePreview,
-                label: t('filePreviewFix'),
-                disabled: state.writable !== true,
-                onChange: (next) => props.edit(FILE_PREVIEW_FIELD, next === true ? 'true' : 'false'),
-              }),
-            ),
-            filePreviewHelp === true
-              ? h(
-                  'div',
-                  { id: FILE_PREVIEW_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('filePreviewFix.help') },
-                  helpParagraphs(t('filePreviewFix.help.body'), t('filePreviewFix.help.note')),
-                )
-              : null,
-          ),
-        ),
-      )
-    }
-
-    /**
-     * Build the Plugins page card's staged form over this plugin's settings.
-     *
-     * @param {object} configForms - the client configuration-form service.
-     * @returns {{ inject: Function, dispose: Function }} the card's slot face and its disposer.
-     */
-    function createSettingsCard(configForms) {
-      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC, FILE_PREVIEW_SPEC])
-      const store = form.bind(() => ({
-        ...form.shell(),
-        [DEPTH_FIELD]: form.field(DEPTH_FIELD),
-        [WHOLE_FILE_FIELD]: form.field(WHOLE_FILE_FIELD),
-        [FILE_PREVIEW_FIELD]: form.field(FILE_PREVIEW_FIELD),
-      }))
-      return {
-        /**
-         * The face the card's slot registration injects.
-         *
-         * @returns {object} the snapshot hook the card reads and the form actions.
-         */
-        inject() {
-          return { hooks: { gitSettings: store }, ...form.actions() }
-        },
-        /** Release the form's subscription to the settings document. */
-        dispose() {
-          form.dispose()
-        },
-      }
-    }
 
     /**
      * The Git tool: the full-page main panel.
@@ -2465,118 +1839,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /**
-     * Per-tab navigation revisions this plugin has already acted on.
-     *
-     * The revision survives a body remount while the tab record does, and a
-     * remount happens for reasons that are not a navigation at all — a session
-     * switch, a sidebar expand, a pane change. Remembering what was handled is
-     * what keeps those from re-selecting the panel the user just left, which is
-     * why the memory lives outside the component.
-     */
-    const handledRevisions = new Map()
-
-    /**
-     * Close the tab one tab body belongs to.
-     *
-     * The framework hands every tab body its own close action, which acts on
-     * that tab in its own session. The controller's `close(tabId)` is not a
-     * substitute: it needs a mounted seat binding, and a body's first effect
-     * runs before that binding is published.
-     *
-     * @param {object|null} info - the tab information the framework handed the body.
-     * @returns {boolean} whether the tab accepted the close.
-     */
-    function closeOwnTab(info) {
-      const actions = info?.tab?.actions
-      if (typeof actions?.close !== 'function') return false
-      try {
-        actions.close()
-        return true
-      } catch {
-        return false
-      }
-    }
-
-    /**
-     * The right Sidebar's Git tab body: a door, not a page.
-     *
-     * A *navigation* to this tab — the guide capsule, the tab chip — opens the
-     * full-page panel and drops the tab again, which is what leaves no Git tab
-     * in the column once the user returns to the conversation. Everything else
-     * — a record restored from a previous session, a body remounted because the
-     * user switched session or expanded the column — only closes itself: every
-     * session keeps its own layout, so forwarding there would re-select the very
-     * panel the user just left.
-     *
-     * The card below is the fallback for a deployment that refuses the close: it
-     * names the tool and offers the same door, and deliberately reads nothing
-     * from the Host, so a lingering tab cannot sit on stale repository data.
-     *
-     * @param {object} props - tab body props, including the framework's `useTabInfo`.
-     * @returns {object|null} the fallback card, or nothing once the tab is gone.
-     */
-    function GitTabDoor({ useTabInfo, t = boundTranslate }) {
-      const info = typeof useTabInfo === 'function' ? useTabInfo() : null
-      const revision = info?.tab?.navigation?.revision ?? 0
-      const visible = info?.tab?.visible === true
-      const tabId = info?.tab?.id
-      const key = String(tabId)
-      const [closed, setClosed] = React.useState(false)
-      React.useEffect(() => {
-        const handled = handledRevisions.get(key) ?? 0
-        if (revision > handled) handledRevisions.set(key, revision)
-        // The panel is opened once per navigation, and only from the foreground:
-        // a background session showing its own layout must not take the seat.
-        if (visible === true && revision > handled && openGitPanel(info) !== true) return
-        const done = closeOwnTab(info)
-        if (done) handledRevisions.delete(key)
-        setClosed(done)
-      }, [visible, revision, key])
-      if (closed) return null
-      return h(
-        'div',
-        { className: 'git-panel' },
-        h(StyleTag, null),
-        h(
-          'div',
-          { className: 'git-panel-launch' },
-          h('div', { className: 'git-panel-launch-icon' }, h(GitGlyph, { size: 28 })),
-          h('div', { className: 'git-panel-launch-title' }, t('title')),
-          h('div', { className: 'git-panel-launch-text' }, t('launcherHint')),
-          h('div', { className: 'git-panel-launch-text' }, t('launcherWhere')),
-          h(
-            'div',
-            { className: 'git-panel-launch-actions' },
-            h(
-              'button',
-              {
-                type: 'button',
-                className: cx('git-panel-btn', 'git-panel-btn-primary'),
-                onClick: () => {
-                  if (openGitPanel(info) === true) setClosed(closeOwnTab(info))
-                },
-              },
-              t('openPanel'),
-            ),
-          ),
-        ),
-      )
-    }
-
-    /**
-     * The right Sidebar's chip title.
-     *
-     * @returns {object} the chip content.
-     */
-    function GitTitle({ t = boundTranslate }) {
-      return h(
-        React.Fragment,
-        null,
-        h('span', { 'aria-hidden': true, style: { marginRight: 4, display: 'inline-flex', verticalAlign: '-2px' } }, h(GitGlyph, { size: 13 })),
-        t('title'),
-      )
-    }
 
     /** Required browser services: slots for every seat, the tab registry, the right-Sidebar controller, layout, locale, and the shared configuration forms. */
     const inject = ['slots', 'sidebarRightTabs', 'sidebarRight', 'layout', 'locale', 'configForms']
@@ -2601,18 +1863,74 @@ window.__ModuleLoader__.load({
       } catch {
         primitives = null
       }
-      // The dictionaries are the one chunk `apply` reads itself, so they are
-      // requested first; the chunk has to arrive before the locale service can
-      // serve a single label.
-      dictionaries = await require.async('./client.i18n.js')
-      ctx.effect(() => ctx.locale.register(LOCALE_NS, dictionaries), 'ui-GitPanel: dictionaries')
-      // The file-preview repair is installed before anything can resolve a
-      // resource address — the right Sidebar may already hold a document tab
-      // when this plugin applies — and it needs only the configuration form
-      // service, so it does not share the settings card's primitives guard.
-      if (typeof ctx.configForms?.get === 'function') {
-        ctx.effect(() => watchFilePreviewFix(ctx), 'ui-GitPanel: file-preview addresses')
+      // The one scope every chunk closes over. Handing it over in a single object
+      // keeps the direction of the dependency visible: the entry owns the module
+      // vocabulary, a chunk destructures exactly what it uses, and no chunk can
+      // reach back into the entry for something that was never given to it.
+      const shared = {
+        h,
+        React,
+        t,
+        boundTranslate,
+        primitives,
+        StyleTag,
+        GitGlyph,
+        cx,
+        basename,
+        fill,
+        statusText,
+        relativeAge,
+        hostContext,
+        ARROW,
+        BRANCH_GLYPH,
+        CARET_OPEN,
+        CARET_CLOSED,
+        CLOSE_GLYPH,
+        DASH,
+        ENTER_GLYPH,
+        UP,
+        DOWN,
+        MAX_DIFF_ROWS,
+        PANEL_ID,
+        RESOURCE_PREFIX,
+        SETTINGS_NS,
+        DEPTH_FIELD,
+        DEPTH_INPUT_ID,
+        DISCOVERY_SECTION_ID,
+        DISPLAY_SECTION_ID,
+        WHOLE_FILE_FIELD,
+        WHOLE_FILE_SPEC,
+        WHOLE_FILE_HELP_ID,
+        FILE_PREVIEW_FIELD,
+        FILE_PREVIEW_SPEC,
+        FILE_PREVIEW_HELP_ID,
+        FILE_PREVIEW_SECTION_ID,
       }
+      // The repair is bound and installed before anything else is, because it has
+      // to be in force before the page resolves a resource address — the right
+      // Sidebar may already hold a document tab when this plugin applies — and it
+      // needs only the configuration form service, so it does not share the
+      // settings card's primitives guard.
+      const repair = (await require.async('./client.preview-fix.js')).create(shared)
+      resourceProtocolOf = repair.resourceProtocolOf
+      if (typeof ctx.configForms?.get === 'function') {
+        ctx.effect(() => repair.watchFilePreviewFix(ctx), 'ui-GitPanel: file-preview addresses')
+      }
+      // Every other chunk is requested here, before a single seat is registered:
+      // the panel, the settings card, and the tab door are all handed to the
+      // framework in this call, so nothing they render may still be waiting.
+      const [i18n, style, settingsFace, sidebarFace] = await Promise.all([
+        require.async('./client.i18n.js'),
+        require.async('./client.style.js'),
+        require.async('./client.settings.js'),
+        require.async('./client.sidebar.js'),
+      ])
+      dictionaries = i18n
+      STYLES = style.STYLES
+      GIT_PATH = style.GIT_PATH
+      const { createSettingsCard, GitSettingsCard } = settingsFace.create(shared)
+      const { GitTabDoor, GitTitle } = sidebarFace.create(shared)
+      ctx.effect(() => ctx.locale.register(LOCALE_NS, dictionaries), 'ui-GitPanel: dictionaries')
       ctx.effect(
         () => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: LOCALE_NS }, GitPanel)),
         'ui-GitPanel: git main panel',
@@ -2651,8 +1969,8 @@ window.__ModuleLoader__.load({
       // namespace — so an older Host or a read-only document shows no dead form,
       // and a third-party bundle never claims a cell in the official group.
       if (primitives !== null && typeof ctx.configForms?.whileServed === 'function') {
-        const card = createSettingsCard(ctx.configForms)
-        ctx.effect(() => () => card.dispose(), 'ui-GitPanel: settings form subscription')
+        const form = createSettingsCard(ctx.configForms)
+        ctx.effect(() => () => form.dispose(), 'ui-GitPanel: settings form subscription')
         ctx.effect(
           () =>
             ctx.configForms.whileServed([SETTINGS_NS], () =>
@@ -2662,7 +1980,7 @@ window.__ModuleLoader__.load({
                     name: 'plugins.bundle.config',
                     key: PLUGIN_ID,
                     locale: LOCALE_NS,
-                    inject: () => card.inject(),
+                    inject: () => form.inject(),
                   },
                   GitSettingsCard,
                 ),
@@ -2676,9 +1994,10 @@ window.__ModuleLoader__.load({
     /**
      * Read the host of one resource address, as the repair reads it.
      *
-     * The repair's whole substance is this one derivation, and a headless
-     * module test cannot observe a global the page patched, so the seam is
-     * exported for the smoke test rather than left to be re-implemented there.
+     * The repair's whole substance is this one derivation, and a headless module
+     * test cannot observe a global the page patched, so the seam is exported for
+     * the smoke test rather than left to be re-implemented there. It answers only
+     * once the repair's chunk has been wired, which is what the reader belongs to.
      *
      * @param {unknown} address - the address to read.
      * @returns {string|undefined} the protocol key the repair resolves, or undefined for any other address.
