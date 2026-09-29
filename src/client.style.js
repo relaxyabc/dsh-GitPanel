@@ -39,7 +39,9 @@ window.__ModuleLoader__.load({
       '.git-panel-col-mid{flex:1;min-width:220px}',
       '.git-panel-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
       '.git-panel-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
-      '.git-panel-pane-top{flex:1 1 46%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      // The pane does not grow: the free space belongs to the working tree, whose
+      // commit box is the tall one and must not be squeezed out of its pane.
+      '.git-panel-pane-top{flex:0 1 40%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-pane-grow{flex:1}',
       '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
@@ -83,7 +85,18 @@ window.__ModuleLoader__.load({
       '.git-panel-msg{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
       '.git-panel-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
+      // The commit box is the panel's main input, so it gets a height of its own,
+      // scaled to the viewport and bounded: the shared rule above stays one line
+      // tall for the dialogs that reuse it.
+      '.git-panel-msg .git-panel-textarea{min-height:clamp(150px,26vh,380px)}',
+      '.git-panel-textarea-tall{min-height:clamp(150px,26vh,360px)}',
       '.git-panel-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
+      // The amend switch gets a full-width, bordered row of its own: tucked into
+      // the button row as plain text it was too easy to miss.
+      '.git-panel-amend{display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));border-radius:5px;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;white-space:nowrap}',
+      '.git-panel-amend:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
+      '.git-panel-amend-on,.git-panel-amend-on:hover{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da);font-weight:600}',
+      '.git-panel-amend-off,.git-panel-amend-off:hover{opacity:.55;cursor:default}',
       '.git-panel-banner{margin:6px 10px;padding:6px 8px;border-radius:5px;word-break:break-word}',
       '.git-panel-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
       '.git-panel-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',

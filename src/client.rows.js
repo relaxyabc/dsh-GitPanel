@@ -85,7 +85,14 @@ window.__ModuleLoader__.load({
           dialog.warning === undefined ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-error'), style: { margin: 0 } }, dialog.warning),
           dialog.input === undefined
             ? null
-            : h('textarea', { className: 'git-panel-textarea', value, autoFocus: true, onChange: (event) => setValue(event.target.value) }),
+            : h('textarea', {
+                // A commit message runs over several lines, so the amend dialog
+                // asks for the tall variant; a one-line branch name does not.
+                className: cx('git-panel-textarea', dialog.multiline === true ? 'git-panel-textarea-tall' : false),
+                value,
+                autoFocus: true,
+                onChange: (event) => setValue(event.target.value),
+              }),
           h(
             'div',
             { className: 'git-panel-dialog-actions' },

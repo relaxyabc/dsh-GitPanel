@@ -386,6 +386,28 @@ try {
   const afterAmend = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })).body.data.commits[0]
   check(afterAmend.subject === 'test: amended subject', 'amend replaces the message', afterAmend.subject)
 
+  // The commit box amends through `commit`, so the staged content has to fold into
+  // the rewritten commit rather than being left in the working tree.
+  writeFileSync(join(alpha, 'readme.md'), 'hello\nworld\nfrom the box\n')
+  await call('stage', { workspaceRoot: root, path: 'alpha', paths: ['readme.md'] })
+  const boxAmend = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: amended from the box', amend: true })
+  check(boxAmend.body.ok === true, 'commit --amend succeeds', boxAmend.body)
+  const boxAmendLog = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 10 })).body.data.commits
+  check(boxAmendLog[0]?.subject === 'test: amended from the box', 'commit --amend replaces the message', boxAmendLog[0]?.subject)
+  check(boxAmendLog.length === 2, 'amending adds no commit', boxAmendLog.length)
+  check((await call('state', { workspaceRoot: root, path: 'alpha' })).body.data.files.length === 0, 'amending consumes the staged change')
+  const boxAmendDiff = (await call('diff', { workspaceRoot: root, path: 'alpha', file: 'readme.md', commit: boxAmend.body.data?.hash })).body.data?.diff ?? ''
+  check(String(boxAmendDiff).includes('+from the box'), 'the rewritten commit carries the staged content', String(boxAmendDiff).slice(0, 200))
+
+  // `--all` stages tracked changes only (the same contract as the existing
+  // commit-all button), so this case modifies a tracked path rather than adding one.
+  writeFileSync(join(alpha, 'readme.md'), 'hello\nworld\nfrom the box\nall\n')
+  const boxAmendAll = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: amended with all', all: true, amend: true })
+  check(boxAmendAll.body.ok === true, 'commit --all --amend succeeds', boxAmendAll.body)
+  check((await call('state', { workspaceRoot: root, path: 'alpha' })).body.data.files.length === 0, 'amend --all leaves a clean tree')
+  const noAmendMessage = await call('commit', { workspaceRoot: root, path: 'alpha', message: '   ', amend: true })
+  check(noAmendMessage.body.ok === false, 'an amend without a message is refused', noAmendMessage.body)
+
   // ---- branches ----------------------------------------------------------------
   console.log('\nbranches')
   const checkout = await call('checkout', { workspaceRoot: root, path: 'alpha', name: 'feature/x' })

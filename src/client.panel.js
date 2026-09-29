@@ -69,6 +69,11 @@ window.__ModuleLoader__.load({
       const [diff, setDiff] = React.useState(null)
       const [diffOpen, setDiffOpen] = React.useState(false)
       const [message, setMessage] = React.useState('')
+      const [amendMode, setAmendMode] = React.useState(false)
+      // The message the user was writing before amend mode replaced it. A ref,
+      // not state: only the toggle reads it, and restoring a draft is not a
+      // render input of its own.
+      const amendDraft = React.useRef('')
       const [busy, setBusy] = React.useState(false)
       const [reposLoading, setReposLoading] = React.useState(false)
       const [stateLoading, setStateLoading] = React.useState(false)
@@ -245,13 +250,16 @@ window.__ModuleLoader__.load({
         }
       }, [repository, workspaceRoot, logToken])
 
-      // A selection belongs to the repository it was made in.
+      // A selection belongs to the repository it was made in — and so does the
+      // amend box: a draft and an amend target never cross repositories.
       React.useEffect(() => {
         setSelectedCommit(null)
         setSelectedFile(null)
         setCommitFiles([])
         setFilesError(null)
         setSelectedPaths(new Set())
+        setAmendMode(false)
+        amendDraft.current = ''
       }, [repository?.path, workspaceRoot])
 
       // A commit's changed paths are read only once that commit is selected.
@@ -442,6 +450,10 @@ window.__ModuleLoader__.load({
       /**
        * Commit the staged changes, optionally staging everything first.
        *
+       * In amend mode the same call rewrites the newest commit instead of adding
+       * one: git folds whatever is staged into it, so the panel only has to name
+       * `amend` and let the Host pass it to `git commit --amend`.
+       *
        * @param {boolean} all - whether to stage every change first.
        * @param {boolean} push - whether to publish afterwards.
        * @returns {Promise<void>} nothing.
@@ -449,16 +461,43 @@ window.__ModuleLoader__.load({
       async function commit(all, push) {
         const text = message.trim()
         if (text === '') return
-        const payload = await mutate('commit', { message: text, all }, undefined)
+        const amending = amendMode === true
+        const payload = await mutate('commit', { message: text, all, amend: amending }, undefined)
         if (payload === null) return
         setMessage('')
+        if (amending) {
+          amendDraft.current = ''
+          setAmendMode(false)
+        }
         const short = String(payload.hash ?? '').slice(0, 8)
         if (!push) {
-          setNotice(fill(t('notice.committed'), { short }))
+          setNotice(fill(amending ? t('notice.amendCommitted') : t('notice.committed'), { short }))
           return
         }
         const pushed = await mutate('push', { remote: state?.remoteNames?.[0] }, undefined, 'state')
         setNotice(pushed === null ? fill(t('notice.committedPushFailed'), { short }) : fill(t('notice.committedPushed'), { short }))
+      }
+
+      /**
+       * Flip the commit box between committing and amending.
+       *
+       * Turning amend on swaps the draft for the newest commit's own message, so
+       * the user edits what is already there rather than retyping it; turning it
+       * off hands the draft back instead of losing it.
+       *
+       * @returns {undefined} nothing.
+       */
+      function toggleAmend() {
+        if (amendMode === true) {
+          setAmendMode(false)
+          setMessage(amendDraft.current)
+          return
+        }
+        const newest = commits[0]
+        if (newest === undefined) return
+        amendDraft.current = message
+        setMessage(newest.body === '' ? newest.subject : `${newest.subject}\n\n${newest.body}`)
+        setAmendMode(true)
       }
 
       /**
@@ -493,7 +532,7 @@ window.__ModuleLoader__.load({
             label: t('menu.editMessage'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: fullMessage, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: fullMessage, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: t('copyHash'), run: () => copyText(commit.hash) },
         ]
@@ -508,7 +547,7 @@ window.__ModuleLoader__.load({
             label: t('amend'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: commit.body === '' ? commit.subject : `${commit.subject}\n\n${commit.body}`, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: commit.body === '' ? commit.subject : `${commit.subject}\n\n${commit.body}`, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: `${t('checkout')} ${commit.short}`, run: () => mutate('checkout', { name: commit.hash }, fill(t('notice.checkedOut'), { name: commit.short })) },
           { label: `${t('cherryPick')} ${commit.short}`, run: () => mutate('cherryPick', { commit: commit.hash }, fill(t('notice.cherryPicked'), { name: commit.short })) },
@@ -664,11 +703,12 @@ window.__ModuleLoader__.load({
                 { className: 'git-panel-cols' },
                 // ---- left: branches, submodules, working tree ------------------
                 h(BranchesColumn, {
-                  branchFilter, branchMenu, branches, busy, commit, copyText, diff, files,
-                  filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths,
-                  remotes, selectEverything, selectedCommit, selectedFile, selectedPaths,
-                  setBranchFilter, setGroups, setMenu, setMessage, setSelectedCommit,
-                  setSelectedFile, setSelectedStaged, state, t, togglePicked,
+                  amendMode, canAmend: commits.length > 0, branchFilter, branchMenu, branches, busy,
+                  commit, copyText, diff, files, filteredBranches, filteredRemotes, groups, message,
+                  mutate, openDiff, pickedPaths, remotes, selectEverything, selectedCommit,
+                  selectedFile, selectedPaths, setBranchFilter, setGroups, setMenu, setMessage,
+                  setSelectedCommit, setSelectedFile, setSelectedStaged, state, t, toggleAmend,
+                  togglePicked,
                 }),
                 // ---- middle: history ------------------------------------------
                 h(HistoryColumn, {

@@ -21,10 +21,11 @@ window.__ModuleLoader__.load({
      */
     function BranchesColumn(props) {
       const {
-        branchFilter, branchMenu, branches, busy, commit, copyText, diff, files, filteredBranches,
-        filteredRemotes, groups, message, mutate, openDiff, pickedPaths, remotes, selectEverything,
-        selectedCommit, selectedFile, selectedPaths, setBranchFilter, setGroups, setMenu, setMessage,
-        setSelectedCommit, setSelectedFile, setSelectedStaged, state, t, togglePicked,
+        amendMode, canAmend, branchFilter, branchMenu, branches, busy, commit, copyText, diff, files,
+        filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths, remotes,
+        selectEverything, selectedCommit, selectedFile, selectedPaths, setBranchFilter, setGroups,
+        setMenu, setMessage, setSelectedCommit, setSelectedFile, setSelectedStaged, state, t,
+        toggleAmend, togglePicked,
       } = props
       return (
         h(
@@ -148,6 +149,25 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'git-panel-msg' },
+              // Amend is a mode, not a fourth command: it swaps the message for
+              // the newest one and turns the commit buttons into rewriters. It
+              // gets its own row above the message so it cannot be missed.
+              h(
+                'label',
+                {
+                  className: cx('git-panel-amend', amendMode === true ? 'git-panel-amend-on' : false, canAmend === true ? false : 'git-panel-amend-off'),
+                  title: canAmend === true ? t('amendBox.hint') : t('amendBox.nothing'),
+                },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'git-panel-check',
+                  checked: amendMode === true,
+                  disabled: busy || canAmend !== true,
+                  'aria-label': t('amendBox'),
+                  onChange: () => toggleAmend(),
+                }),
+                h('span', null, t('amendBox')),
+              ),
               h('textarea', {
                 className: 'git-panel-textarea',
                 value: message,
@@ -164,9 +184,11 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'git-panel-actions' },
-                h('button', { type: 'button', className: cx('git-panel-btn', 'git-panel-btn-primary'), disabled: busy || message.trim() === '', onClick: () => commit(false, false) }, t('commit')),
-                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(true, false) }, t('commitAll')),
-                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(false, true) }, t('commitPush')),
+                h('button', { type: 'button', className: cx('git-panel-btn', 'git-panel-btn-primary'), disabled: busy || message.trim() === '', onClick: () => commit(false, false) }, amendMode === true ? t('amendCommit') : t('commit')),
+                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '', onClick: () => commit(true, false) }, amendMode === true ? t('amendCommitAll') : t('commitAll')),
+                // Publishing a rewritten commit needs a force push, which this
+                // panel does not offer, so the button says so instead of failing.
+                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy || message.trim() === '' || amendMode === true, title: amendMode === true ? t('amendPush.hint') : undefined, onClick: () => commit(false, true) }, t('commitPush')),
               ),
             ),
           ),

@@ -647,6 +647,16 @@ check(localeState.ns?.dicts?.zh?.launcherHint === '分支、提交、改动与�
 check(localeState.ns?.dicts?.en?.['settings.save'] === 'Save' && localeState.ns?.dicts?.zh?.['settings.save'] === '保存', 'the settings form copy is registered in both languages')
 check(localeState.ns?.dicts?.en?.['diff.before'] === 'Before' && localeState.ns?.dicts?.zh?.['diff.before'] === '修改前', 'the side-by-side headings are registered in both languages')
 check(
+  localeState.ns?.dicts?.zh?.['amendBox'] === 'Amend' && localeState.ns?.dicts?.zh?.['amendCommitAll'] === 'Amend all',
+  'the commit box amend control keeps its English label',
+  localeState.ns?.dicts?.zh?.['amendBox'],
+)
+check(
+  localeState.ns?.dicts?.zh?.['amend'] === '修改提交信息' && localeState.ns?.dicts?.zh?.['menu.editMessage'] === '修改提交信息',
+  'the history and commit-detail menus keep their original copy',
+  { amend: localeState.ns?.dicts?.zh?.['amend'], editMessage: localeState.ns?.dicts?.zh?.['menu.editMessage'] },
+)
+check(
   Object.keys(localeState.ns?.dicts?.en ?? {}).every((key) => Object.hasOwn(localeState.ns?.dicts?.zh ?? {}, key)) &&
     Object.keys(localeState.ns?.dicts?.zh ?? {}).every((key) => Object.hasOwn(localeState.ns?.dicts?.en ?? {}, key)),
   'both dictionaries carry the same keys',
@@ -1336,6 +1346,23 @@ check(menuText.includes('Reset (hard)'), 'the commit menu offers a hard reset')
 check(menuText.includes('Revert commit'), 'the commit menu offers a revert')
 check(menuText.includes('Amend message'), 'the commit menu offers an amend', menuText.slice(-24))
 
+// The amend action edits a multi-line message, so its dialog must not be a one-line box.
+const newestRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('feat: greet the world'),
+)
+newestRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 70, clientY: 70 })
+view = await settle(view)
+const amendMenuItem = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Amend message')
+check(amendMenuItem !== undefined && amendMenuItem.props?.disabled !== true, 'the newest commit offers an enabled amend', amendMenuItem?.props)
+amendMenuItem?.props?.onClick?.()
+view = await settle(view)
+const amendDialogEditor = find(view.tree, (element) => element.type === 'textarea' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-textarea-tall'))
+check(amendDialogEditor !== undefined, 'the amend dialog uses the tall message editor', find(view.tree, (element) => element.type === 'div' && element.props?.className === 'git-panel-dialog')?.props?.className)
+check(amendDialogEditor?.props?.value === 'feat: greet the world\n\nA longer explanation\nof the change.', 'the amend dialog starts from the commit message', amendDialogEditor?.props?.value)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Cancel')?.props?.onClick?.()
+view = await settle(view)
+
 const changeRow = find(
   view.tree,
   (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fresh.txt'),
@@ -1344,6 +1371,94 @@ check(changeRow !== undefined, 'a changed path carries a context menu')
 changeRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
 view = await settle(view)
 check(view.text().includes('Show the diff'), 'the changed-path menu offers the diff', view.text().slice(-24))
+
+console.log('\ncommit box')
+const boxView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const boxStyle = find(boxView.tree, (element) => element.type === 'style')
+const boxCss = Array.isArray(boxStyle?.children) ? boxStyle.children.flat().join('') : ''
+const boxRule = /\.git-panel-msg \.git-panel-textarea\{([^}]*)\}/.exec(boxCss)?.[1] ?? ''
+check(boxRule.includes('min-height:clamp(150px,26vh,380px)'), 'the commit message box scales with the viewport, not one line', boxRule)
+check(boxCss.includes('.git-panel-textarea-tall{'), 'the multiline dialog editor has its own tall rule', boxCss.slice(boxCss.indexOf('.git-panel-textarea-tall'), boxCss.indexOf('.git-panel-textarea-tall') + 60))
+const paneRule = /(?:^|\n)\.git-panel-pane-top\{([^}]*)\}/.exec(boxCss)?.[1] ?? ''
+check(paneRule.includes('flex:0 1 40%'), 'the branches pane yields the free space to the taller commit box', paneRule)
+check(boxCss.includes('.git-panel-amend-on'), 'the active amend row carries its own rule', boxCss.slice(boxCss.indexOf('.git-panel-amend'), boxCss.indexOf('.git-panel-amend') + 80))
+const dialogRule = /(?:^|\n)\.git-panel-textarea\{([^}]*)\}/.exec(boxCss)?.[1] ?? ''
+check(dialogRule.includes('min-height:56px'), 'the dialog editor keeps its smaller height', dialogRule)
+const boxTextarea = find(boxView.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(boxTextarea !== undefined, 'the commit box renders a message editor')
+check(boxTextarea?.props?.value === '', 'the message editor starts empty')
+/**
+ * Find one button by the exact text it renders.
+ * @param {object} tree - element tree.
+ * @param {string} label - the button's text.
+ * @returns {object|undefined} the button element.
+ */
+const byLabel = (tree, label) => find(tree, (element) => element.type === 'button' && collectText(element).join('') === label)
+const amendCheck = find(boxView.tree, (element) => element.type === 'input' && element.props?.['aria-label'] === 'Amend last commit')
+check(amendCheck !== undefined, 'the commit box offers an amend switch')
+check(amendCheck?.props?.checked === false, 'the amend switch starts off')
+check(amendCheck?.props?.disabled === false, 'the amend switch is available once history has a commit')
+const amendLabel = find(boxView.tree, (element) => element.type === 'label' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-amend'))
+check(amendLabel?.props?.title === 'Rewrite the newest commit with the staged changes and this message', 'the amend switch explains what it does', amendLabel?.props?.title)
+
+console.log('\namend mode')
+amendCheck?.props?.onChange?.()
+const amendOn = await settle(boxView)
+const amendRow = find(amendOn.tree, (element) => element.type === 'label' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-amend-on'))
+check(amendRow !== undefined, 'the amend row marks itself as active', amendOn.text().slice(-8))
+const amendTextarea = find(amendOn.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(amendTextarea?.props?.value === 'feat: greet the world\n\nA longer explanation\nof the change.', 'turning amend on pre-fills the newest commit message', amendTextarea?.props?.value)
+check(byLabel(amendOn.tree, 'Amend') !== undefined, 'the primary control becomes an amend control', amendOn.text().slice(-8))
+check(byLabel(amendOn.tree, 'Commit') === undefined, 'the plain commit control is gone while amending')
+check(byLabel(amendOn.tree, 'Amend all') !== undefined, 'the commit-all control rewrites everything too')
+const amendPush = byLabel(amendOn.tree, 'Commit & push')
+check(amendPush?.props?.disabled === true, 'publishing is refused while amending', amendPush?.props)
+check(amendPush?.props?.title === 'Pushing is disabled while amending: the rewritten commit needs a force push', 'the refused publish says why', amendPush?.props?.title)
+
+requests.length = 0
+byLabel(amendOn.tree, 'Amend')?.props?.onClick?.()
+const amended = await settle(amendOn)
+const amendRequest = requests.find((entry) => entry.op === 'commit')
+check(amendRequest?.args?.amend === true, 'an amend tells the Host to rewrite', amendRequest?.args)
+check(amendRequest?.args?.message === 'feat: greet the world\n\nA longer explanation\nof the change.', 'the amendment carries the newest message', amendRequest?.args)
+check(amendRequest?.args?.all === false, 'a plain amend stages nothing extra', amendRequest?.args)
+check(amendRequest?.args?.path === WORKSPACE + '/app', 'the amendment targets the selected repository', amendRequest?.args)
+const amendReset = find(amended.tree, (element) => element.type === 'input' && element.props?.['aria-label'] === 'Amend last commit')
+check(amendReset?.props?.checked === false, 'the amend switch resets once the rewrite lands', amendReset?.props)
+
+console.log('\namend draft handover')
+const draftView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+find(draftView.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')?.props?.onChange?.({ target: { value: 'work in progress' } })
+const typed = await settle(draftView)
+find(typed.tree, (element) => element.type === 'input' && element.props?.['aria-label'] === 'Amend last commit')?.props?.onChange?.()
+const filled = await settle(typed)
+const filledText = find(filled.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(String(filledText?.props?.value).startsWith('feat: greet the world'), 'amend swaps the draft for the newest message', filledText?.props?.value)
+find(filled.tree, (element) => element.type === 'input' && element.props?.['aria-label'] === 'Amend last commit')?.props?.onChange?.()
+const restored = await settle(filled)
+const restoredText = find(restored.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(restoredText?.props?.value === 'work in progress', 'leaving amend hands the draft back', restoredText?.props?.value)
+check(byLabel(restored.tree, 'Commit') !== undefined, 'the plain commit control returns', restored.text().slice(-8))
+
+console.log('\nplain commit stays plain')
+requests.length = 0
+find(restored.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')?.props?.onChange?.({ target: { value: 'a normal commit' } })
+const typedPlain = await settle(restored)
+byLabel(typedPlain.tree, 'Commit')?.props?.onClick?.()
+const committedPlain = await settle(typedPlain)
+const plainRequest = requests.find((entry) => entry.op === 'commit')
+check(plainRequest?.args?.amend === false, 'an ordinary commit never rewrites', plainRequest?.args)
+check(plainRequest?.args?.message === 'a normal commit', 'an ordinary commit carries what was typed', plainRequest?.args)
+// The notice itself is not assertable here: the harness drains the timers that
+// would clear it, so the cleared message box stands in for the successful write.
+const afterCommit = find(committedPlain.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(afterCommit?.props?.value === '', 'a successful commit clears the message box', afterCommit?.props?.value)
 
 console.log('\nselect all and whole-file diff')
 requests.length = 0
