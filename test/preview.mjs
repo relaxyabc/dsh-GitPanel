@@ -9,10 +9,11 @@
  * supplied here because the running application owns them.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createModuleLoader } from './module-loader.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const outDir = join(here, '..', 'preview')
@@ -243,17 +244,24 @@ function trackedFetch(url, init) {
   return tracked
 }
 
-const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
-new Function('window', 'require', 'fetch', source)(globalThis.window, globalThis.require, trackedFetch)
+// The page installs its module loader before any bundle runs, so the harness does
+// the same, and every chunk the bundle asks for goes through the same contract.
+const moduleLoader = createModuleLoader({
+  packageDir: join(here, '..'),
+  packageId: 'GitPanel',
+  require: globalThis.require,
+  evaluate: (source) => new Function('window', 'require', 'fetch', source)(globalThis.window, moduleLoader.require, trackedFetch),
+})
+globalThis.window.__ModuleLoader__ = moduleLoader.moduleLoader
 
-const loaded = globalThis.__registration.factory(globalThis.require)
+const loaded = moduleLoader.loadEntry()
 
 /** The locale service stand-in: captures dictionaries, renders DSH_PREVIEW_LANG (default en). */
 const PREVIEW_LANG = process.env.DSH_PREVIEW_LANG === 'zh' ? 'zh' : 'en'
 const previewLocale = { dicts: {} }
 /** The main panel component. */
 let panelComponent = null
-loaded.apply({
+await loaded.apply({
   effect: (callback) => {
     callback()
     return () => {}

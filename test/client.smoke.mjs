@@ -8,9 +8,9 @@
  * commit's details and a file diff — and inspects the captured registrations.
  * It catches structural errors, not visual ones.
  */
-import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createModuleLoader } from './module-loader.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -110,10 +110,8 @@ const React = {
 }
 
 // ---- module loading ---------------------------------------------------------
-let registration = null
 globalThis.window = {
   __DSH_GIT_TRACE__: process.env.DSH_SMOKE_TRACE === '1',
-  __ModuleLoader__: { load: (entry) => { registration = entry } },
   innerWidth: 1440,
   innerHeight: 900,
   addEventListener: () => {},
@@ -433,15 +431,24 @@ function answerFor(request) {
   return {}
 }
 
-const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+// The page installs its module loader before any bundle runs, so the harness does
+// the same: `client.js` and every chunk it asks for go through the contract the
+// browser module system enforces (see test/module-loader.mjs).
+/** The parser the page shipped with, captured before the repair can replace it. */
 const nativeUrl = globalThis.URL
-new Function('window', 'require', 'fetch', source)(globalThis.window, globalThis.require, trackedFetch)
+const moduleLoader = createModuleLoader({
+  packageDir: join(here, '..'),
+  packageId: 'GitPanel',
+  require: globalThis.require,
+  evaluate: (source) => new Function('window', 'require', 'fetch', source)(globalThis.window, moduleLoader.require, trackedFetch),
+})
+globalThis.window.__ModuleLoader__ = moduleLoader.moduleLoader
 
 console.log('\nmodule face')
-check(registration !== null, 'the bundle registers a module factory')
-check(registration?.id === 'GitPanel', 'the factory id is the package name', registration?.id)
-
-const clientModule = registration.factory(globalThis.require)
+const clientModule = moduleLoader.loadEntry()
+// A wrong `id` cannot even register (the loader rejects it the way the module
+// system does), so this asserts the entry really arrived under the package name.
+check(moduleLoader.registered().includes('client.js'), 'the bundle registers its entry factory through the module loader', moduleLoader.registered())
 check(clientModule?.inject?.includes('slots'), 'it injects the slot registry')
 check(clientModule?.inject?.includes('sidebarRightTabs'), 'it injects the tab-type registry')
 check(clientModule?.inject?.includes('layout'), 'it injects the layout service')
@@ -533,7 +540,7 @@ const localeStub = {
 /** Tab ids the fake sidebar controller was asked to close. */
 const closedTabs = []
 
-clientModule.apply({
+await clientModule.apply({
   effect: (callback) => {
     const disposer = callback()
     return typeof disposer === 'function' ? disposer : () => {}
