@@ -1,85 +1,90 @@
 # GitPanel
 
-**DSH Web 客户端的 Git 管理插件** —— 在右侧边栏与主面板中浏览工作区、分支、改动与提交历史,并直接完成提交、推送、分支与历史操作。类似 IntelliJ 的 Git 工具窗口,以 DSH 插件 bundle 的形式挂载。
+**DSH Web 客户端的 Git 管理插件** —— 在左侧面板栏打开一个全页三栏 Git 工具(分支 / 历史 / 提交详情),右侧边栏的 Git 胶囊只负责把面板打开。类似 IntelliJ 的 Git 工具窗口,以 DSH 插件 bundle 形式挂载。
 
-- 包名:`GitPanel`(v0.2.0,private)
-- 运行平台:Web 客户端;要求 DSH ≥ `0.1.7-rc.1`,Host 机器装有 `git`
-- 零运行时依赖、零构建步骤:两个源文件直接交付
+## 1. 这是什么、跑在哪、怎么用
 
----
+### 是什么
 
-## 功能特性
+| 项 | 值 |
+|---|---|
+| 包名 / 版本 | `GitPanel` / `0.2.0`(private,仓库根即包根) |
+| 挂载方式 | DSH 插件 bundle(`dsh.manifestVersion: 1`,client 平台 `web`) |
+| 运行要求 | DSH ≥ `0.1.7-rc.1`;使用 Web 客户端的 profile;Host 机器的 `PATH` 里有 `git` |
+| 依赖 | 无运行时依赖、无构建步骤:Host 半一个文件 + 浏览器半若干分片,交付什么运行什么 |
 
-### 仓库与工作区
-- **多仓库发现**:递归扫描工作区根(深度可配置,默认 3 层、上限 8;最多 64 个仓库、20 000 个目录项),自动跳过 `node_modules`、`.git`、`dist`、`vendor` 等目录;嵌套的独立仓库与子模块工作树(包括位于父仓库树之外的子模块)都会被发现并标记。
-- **多工作区切换**:所有已打开工作区均可浏览;打开面板时自动选中**当前会话**所在的工作区(按会话的主视图保留关系识别,会话目录的优先级高于工作区列表顺序)。工具栏下拉显示的是**与左侧工作区列表一致的工作区名字**(悬停可见完整路径),宽度与右边缘都已对齐下方分支栏。
-- **扫描深度可配置**:递归层数(1–8)是插件配置项,在**插件页面「已安装」分组里打开 `GitPanel`** 即为该配置(见[插件配置](#插件配置));切换仓库不会重新扫描工作区。
+### 安装
 
-### 分支
-- 本地 / 远程分支分组展示,可折叠、可按名称过滤;当前分支带 `HEAD` 标记。
-- 显示每个分支的上游与最新提交说明;顶栏显示 ahead/behind 计数(`↑2 ↓1`)。
-- 双击或右键菜单:切换分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交新建分支。
+1. 装进 profile:
 
-### 提交历史
-- 每页最多 200 条,含作者、相对时间与 ref 装饰(tag / HEAD);页面本身不携带每提交的文件统计,该提交的改动文件在**选中它时**才单独读取,所以历史列表始终是一次轻量调用。
-- 点击提交查看完整详情:右栏上方为提交信息(哈希、作者、日期、父提交、正文;右键可修改提交信息,仅限最新提交),下方为该提交的文件改动列表(读取中显示载入提示)。
-- **双击文件**在居中的弹窗中查看该文件的 diff,以**左右双栏**呈现(左「修改前」/ 右「修改后」,两侧带行号,替换行同排对照;二进制文件与无差异分别给出提示);弹窗一次只显示一个文件,切换选择时内容同步更新,Esc / 点击遮罩 / × 关闭。
-- **改动导航(始终可用)**:diff 弹窗有两条导航。左侧紧挨行号的是**改动列表**(逐条列出每处改动,新增 / 删除 / 修改按颜色区分,顶部带「上一处 / 下一处」);右侧是**改动概览条**,类似 IDE 的滚动条标记:每处改动按它在整个 diff 中的位置按比例高亮,同时显示当前可见范围,点击任意标记或条上位置即可跳转。
-- **整文件对照(可选)**:开启配置项 `wholeFileDiff` 后,除上述导航外,左右两栏还会显示**整个文件**而不是只有改动片段(改动仍按行标色)。该项在插件页面以「Diff 整文件对照」**开关**呈现,默认关闭,保持精简片段视图。
-- 右键菜单:复制哈希、**Amend**(仅限最新提交)、Checkout、Cherry-pick、从该提交建分支、**Reset(soft/mixed/hard)**、**Revert**;危险操作(hard reset、删除分支)有确认对话框。
+   ```sh
+   dsh plugin --profile <name> add E:\owner\dsh-GitPanel
+   ```
 
-### 工作区改动
-- 基于 `git status --porcelain=v2 -z` 的完整改动列表:状态字母(M/A/D/R/U/?)+ 每文件 +/− 行数,二进制文件标注。
-- 复选框是**选中**,与暂存解耦:表头**全选**复选框负责全选 / 全不选(部分选中时显示半选态),再用 **Stage selected / Unstage selected(暂存选中 / 取消暂存选中)** 按钮暂存或取消暂存选中的文件;已暂存的文件行内带 `staged` 标记。勾选纯本地、不触发任何 Host 调用,所以文件再多也不卡。右键菜单仍提供单文件 stage/unstage、查看 diff、复制路径。
-- **双击改动文件**在居中的弹窗中查看左右双栏 diff(未跟踪文件也能给出内容 diff);弹窗一次只显示一个文件,切换选择时内容同步更新,Esc / 点击遮罩 / × 关闭。
+2. 在 profile 的 `cordis.patch.yml`(或以 `--patch` 叠加层)里插入下面的块 —— 包内 `cordis.patch.yml` 即此内容:
 
-### 提交与推送
-- 提交信息输入框,`Ctrl/Cmd+Enter` 快捷提交;三个按钮:**Commit**(提交已暂存)、**Commit all**(先暂存全部)、**Commit & push**。
-- 一键 Push(取第一个 remote,必要时自动 `--set-upstream`)、**Fetch / Pull**:Fetch 只下载对象与远程跟踪引用、不动工作区;Pull 仅在当前分支存在上游时可用,直接整合上游改动。结果横幅反馈(成功 4 秒自动消失)。
-- 暂存 / 提交 / 推送等操作只重载与它相关的数据(暂存只重读工作区,不重新扫描工作区、不重读历史),因此暂存时不会出现整面板的「载入中」。
+   ```yaml
+   - insert:
+       - id: GitPanel
+         name: 'GitPanel'
+   ```
 
-### 子模块
-- 列出全部子模块及状态(initialized / uninitialized / out-of-date / conflicted)。
-- 一键 `submodule init` / `update` / `sync`(递归)。
+3. **重启 profile**(启用 `dsh-hmr` 时自动重载)。
 
-### 界面形态
-- **主面板**:左侧面板栏的 Git 图标进入,全页三栏布局 —— 左(分支 + 改动 + 提交框)、中(历史)、右(上:提交信息,下:该提交的文件改动)。
-- **右侧边栏只当门,不留页**:右侧边栏 guide 里的 Git 胶囊、以及从上一会话恢复出来的 Git 标签页,一旦挂载就**用标签页自己的 `close()` 关掉** —— 因为布局按会话持久化,留下的标签页会跨刷新复活。并且**一次导航只开一次面板**:只被恢复、或因切会话 / 展开列而重新挂载的记录只关自己、绝不抢主区域(否则会把用户刚点开的会话顶掉)。若控制器拒绝关闭,标签页里只显示一张不读任何仓库数据的兜底卡片(标题、说明与「打开 Git 面板」按钮),不会停在一份过期的摘要上。
-- **顶栏**:工作区目录与仓库字段常显(带小标签、悬停显示完整路径),当前分支以芯片展示,刷新 / 获取 / 拉取 / 推送按钮右置;打开面板自动选中当前会话的工作区,切换会话后面板跟随;首次载入期间显示进度文案,日常的暂存刷新不再打扰。
-- **中英双语,两层各司其职**:面板内的全部界面文案(含右侧边栏 guide 条目的标题与描述、菜单、对话框、操作提示)收在 `client.js` 的 `en` / `zh` 词典里,经 DSH locale 服务(`gitPanel` 命名空间)输出,跟随客户端语言设置实时切换;插件列表里显示的**包名与描述**则由 `locale/{en,zh}.json` 提供 —— 那份元数据由 Host 在插件加载前读取(`readPluginMeta` 只认 `meta.title` / `meta.description`),此时浏览器半还没有运行,两边无法互相替代。
-- 全部样式为内联的**设计令牌样式**(`--dsw-alias-*` 变量 + 回退值),自动适配明暗两套主题;主按钮与 `HEAD` 标签使用主色淡化配色,深色模式下文字同样清晰;类名统一 `git-panel-` 前缀。样式表由渲染树里的 `StyleTag` 挂载,因此**每个会用到这些类名的挂载点都各自渲染一份**(主面板、右侧边栏兜底卡、插件页配置卡片)—— 漏掉一处,该处的规则会静默失效并退回页面默认排版。
+### 使用
 
-### 插件配置
-<a id="插件配置"></a>
+- **左侧面板栏**的 Git 图标 → 全页三栏面板:左(分支 + 改动 + 提交框)、中(历史)、右(上:提交信息,下:该提交的文件改动)。
+- **右侧边栏**的 guide 胶囊里也有 Git:点击即打开全页面板**并关掉那张标签页**(布局按会话持久化,留下的标签页会跨刷新复活)。若控制器拒绝关闭,标签页里只显示一张不读仓库数据的兜底卡片。
+- **顶栏**常显工作区目录与仓库字段(下拉可切换,悬停见完整路径),当前分支以芯片展示并带 ahead/behind 计数;面板打开时自动选中当前会话所在的工作区,切换会话后面板跟随。
+- 提交信息框里 `Ctrl/Cmd+Enter` 直接提交。危险操作(hard reset、删除分支)有确认对话框;成功提示 4 秒后自动消失。
+
+### 配置
+
+配置在**插件页面「已安装」分组里的 `GitPanel`** 上(本包自己的配置位,不占官方分组),分「仓库发现」「差异显示」「文件预览」三组;输入后按「保存」写入 profile,三个字段都即时生效、无需重启。
+
 | 配置项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `discoveryDepth` | number(1–8) | `3` | 仓库发现向下递归的目录层数 |
-| `wholeFileDiff` | boolean | `false` | 关闭:diff 只显示改动片段;开启:左右两栏显示整个文件(改动导航栏始终可用) |
-| `filePreviewFix` | boolean | `true` | 处理 `dsh-client-resources` 的 `protocolOf` 依赖 `new URL(address).hostname` 导致「文件资源服务不可用」的问题;关闭后地址解析完全交给浏览器 |
+| `discoveryDepth` | number(1–8) | `3` | 仓库发现向下递归的目录层数;运行时始终夹取在该区间内 |
+| `wholeFileDiff` | boolean | `false` | 开启后 diff 左右两栏显示整个文件而不只是改动片段 |
+| `filePreviewFix` | boolean | `true` | 修复 Chromium 上「文件资源服务不可用」的文件预览,见下 |
 
-配置项挂在**插件页面「已安装」分组中的 `GitPanel`** 上:打开该包即看到「仓库发现」「差异显示」「文件预览」三组(与官方插件把自己的配置放在自己页面上的做法一致,占用的是 bundle 自己的配置位 `plugins.bundle.config`,而不是"官方"分组里的卡片)。卡片与内置设置页同构:分组标题 + 共享设置控件,`discoveryDepth` 用共享数值输入框,`wholeFileDiff` 与 `filePreviewFix` 用共享开关(标签行右侧)。三者的说明都收在标签旁的 ⓘ 按钮里,点击就地展开两段(做什么 / 取值与代价),排版完全一致;被覆盖的值显示徽标与「重置」。输入后按「保存」才提交给 Host,文档只读时表单会说明。三个字段都声明为 `volatile`,因此**即时生效、无需重启**:Host 侧按调用读取实时配置值,浏览器半则订阅同一份设置文档,保存后立刻装上或卸下地址修复。配置卡片是独立于面板的挂载点,所以它自带本包样式表的副本,分组标题、开关行与三处 ⓘ 的排版都与内置设置页一致。
+`filePreviewFix` 补偿的是 DSH 上游的一个缺陷([discussion #6437](https://github.com/deepseek-ai/deepseek-harness/discussions/6437)):`dsh-client-resources` 用 `new URL(address).hostname` 取协议键,而 Chromium 不把非特殊 scheme 的 authority 当作主机(`new URL('dsh-resource://file/x').hostname` 在 Node 上是 `file`、在 Chromium 上是 `''`),于是每个资源地址都解析不出提供方,右侧边栏的文件预览只剩那句报错。本插件的修复**只改 `dsh-resource://` 这一类地址**(其余地址、相对地址解析、非法地址抛错全部交回浏览器),代价是这类地址**不是 `instanceof URL`**、就地改写部件不回写整条地址(面板只读不改)。上游修好后可以关闭本项。
 
-#### 为什么需要 `filePreviewFix`
+## 2. 功能清单
 
-右侧边栏的文件预览在部分浏览器上报「文件资源服务不可用」,根因在 DSH 上游并已记录在 [deepseek-ai/deepseek-harness discussion #6437](https://github.com/deepseek-ai/deepseek-harness/discussions/6437):`dsh-client-resources` 的 `protocolOf` 用 `new URL(address).hostname` 取协议键,而 Chromium 不把非特殊 scheme 的 authority 当作主机:
+**仓库与工作区**
+- 递归发现工作区下的全部仓库与子模块工作树(含位于父仓库树之外的子模块),自动跳过 `node_modules`、`.git`、`dist`、`vendor` 等目录。
+- 多工作区浏览;打开面板自动选中当前会话所在的工作区,顶栏下拉显示与左侧列表一致的名称与完整路径。
+- 深度可配置,切换仓库不重新扫描。
 
-```js
-new URL('dsh-resource://file/x').hostname   // Node / 规范:'file'   Chromium:''
-```
+**分支**
+- 本地 / 远程分组、可折叠、可按名称过滤;当前分支带 `HEAD` 标记,显示上游与最新提交说明。
+- 右键或双击:切换分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交新建分支。
 
-于是**每个资源地址都解析不出协议**,没有任何提供方被要求打开内容,预览只剩那句错误文案。
+**提交历史与 diff**
+- 每页最多 200 条(作者、相对时间、ref 装饰);每提交的文件统计在**选中该提交时**才单独读取,历史列表始终是一次轻量调用。
+- 选中提交后右栏显示完整信息(哈希、作者、日期、父提交、正文;可改写最新提交的信息)与该提交的文件列表。
+- 双击文件弹出**左右双栏 diff**(两侧行号、替换行同排对照;二进制与无差异分别提示);未跟踪文件也能给出内容 diff。
+- diff 弹窗自带两条**改动导航**:左侧改动列表(逐条 + 上一处/下一处),右侧概览条(按位置比例高亮、显示可见范围、点击跳转);开启 `wholeFileDiff` 后两栏改为整文件对照。
+- 提交右键菜单:复制哈希、Amend(仅最新提交)、Checkout、Cherry-pick、从该提交建分支、Reset(soft/mixed/hard)、Revert。
 
-本插件的修复是**收窄到只改这一类地址**:把 `URL` 换成一个包装函数,只有 `dsh-resource://` 地址返回带正确 `hostname` 的视图,其余地址(包括 relative + base 的解析、被拒绝的非法地址)一律交回浏览器自身的实现。因此它**跨引擎同构**:在 Node/jsdom 上原生结果本就正确,包装后结果不变;在 Chromium 上补齐缺失的主机。它**不是上游修复的替代品** —— 上游改了 `protocolOf` 之后可直接把本项关闭(或保持开启,行为一致)。
+**工作区改动与提交**
+- 基于 `git status --porcelain=v2 -z` 的改动列表:状态字母 + 每文件 +/− 行数,二进制标注。
+- 复选框只表示**选中**(纯本地、不触发 Host 调用):表头全选(部分选中显示半选态)+「暂存选中 / 取消暂存选中」按钮;右键仍可单文件 stage/unstage、看 diff、复制路径。
+- **Commit** / **Commit all**(先暂存全部)/ **Commit & push** 三个按钮,`Ctrl/Cmd+Enter` 快捷提交。
+- **Push**(必要时自动 `--set-upstream`)、**Fetch**(只下载对象与远程跟踪引用)、**Pull**(仅当前分支有上游时可用)。
+- 暂存、提交、推送只重载相关数据:暂存不会重新扫描工作区或重读历史,因此不会出现整面板「载入中」。
 
-实现代价如实记录:资源地址返回的是包装视图,因此这类地址**不是 `instanceof URL`**,就地改写其中一个部件也不会回写整条地址(资源地址只被读取、从不被改写,面板里没有这种用法)。关闭开关会立即卸下包装并还原浏览器解析器;插件被卸载时同样还原。
+**子模块**
+- 列出全部子模块与状态(initialized / uninitialized / out-of-date / conflicted),一键 init / update / sync(递归)。
 
-配置声明是零依赖手写的 schemastery 兼容图(`~standard.validate` + `{uid, refs}` 的 `toJSON`),Host 与设置表单都把它当作原生 schemastery 图投影;越界值在配置期即被拒绝,运行时读到的值始终夹取到 1–8。
+**界面与语言**
+- 中英双语:面板内全部文案(含 guide 条目、菜单、对话框、提示)经 DSH locale 服务输出,跟随客户端语言设置实时切换;插件卡片上的包名与描述来自 `locale/{en,zh}.json`。
+- 全部样式为内联设计令牌(`--dsw-alias-*` + 字面回退值),自动适配明暗主题。
 
----
+## 3. 架构与目录结构
 
-## 架构
-
-插件是一个 DSH bundle,由两个对等的"半"组成,通过一条认证 Fetch 路由通信:
+两半对等,通过一条认证 Fetch 路由通信:
 
 ```
 ┌─ 浏览器半  src/client.js + src/client.*.js ─┐     ┌─ Host 半  index.js ─────────────────┐
@@ -91,207 +96,90 @@ new URL('dsh-resource://file/x').hostname   // Node / 规范:'file'   Chromium:'
 └─────────────────────────────────────────────┘ JSON
 ```
 
-Host 半在仓库根([index.js](index.js)),浏览器半在 [src/](src)(相当于上游包的 `lib/`)。两半的定位互不相干:Host 半由 `exports["."]` 决定,浏览器半入口由 `exports["./client"]` 决定 —— 只有**分片**必须与客户端入口同级(Host 读 `dirname(clientPath)` 下的兄弟文件,浏览器也只把 `client.js` 换成分片名,URL 里不含路径)。
+Host 半在仓库根(`index.js`),浏览器半在 `src/`(相当于上游包的 `lib/`)。两半的定位互不相干:Host 半由 `exports["."]` 决定,浏览器入口由 `exports["./client"]` 决定 —— 只有**分片**必须与浏览器入口同级。
 
-| 文件 | 职责 |
-|---|---|
-| `index.js` | Host 半:仓库发现、`git` 子进程调用与全部解析器;注册唯一路由 `POST /api/local-git`;注入 `webServer`、`connection` |
-| `src/client.js` | 浏览器半的**入口**:模块词汇表、`shared` 接线表、Host 传输与文本助手,以及 `apply`(加载全部分片、注册各席位);注入 `slots`、`sidebarRightTabs`、`layout`、`configForms`;仅通过 `/api/local-git` 与 Host 交互 |
-| `src/client.*.js` | 浏览器半的**包内分片**(见[为什么分片](#为什么分片)):词典、样式、主面板、三栏、diff、行组件、设置卡、右侧边栏门、资源地址修复 |
-| `cordis.patch.yml` | bundle 补丁层:把 Host 半以服务 id `GitPanel` 插入组合 |
-| `package.json` | `dsh.manifestVersion: 1`;client 平台 `web`,依赖 `@deepseek-ai/dsh-client-ui-sidebar-right`、`@deepseek-ai/dsh-client-ui-session`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-ui-primitives`;导出映射与 `files` 白名单(含 `src/client.*.js`) |
-| `locale/*.json` | 插件卡片(插件列表与清单)的包名与描述:Host 在加载插件前读取,只认 `meta.title` / `meta.description`;面板内的界面文案不在这里 |
-| `test/*` | 四个无框架 Node 测试(见[开发](#开发)) |
+### 通信与操作
 
-### 为什么分片
-
-浏览器半没有打包器:DSH 把它当普通脚本加载,`client.js` 自己调 `window.__ModuleLoader__.load({ id, factory })` 注册工厂,`import` 既被本仓库的不变量禁止(整个文件必须能 `new Function(...)` 求值),DSH 的 `require` 也只认平台种子与清单里 `inject` 的包,不认包内相对路径。官方给零构建包留的通道是**包内分片**:分片文件与 `exports["./client"]` 指向的入口同级、名字匹配 `client.<名字>.js`,自己注册成
-
-```js
-window.__ModuleLoader__.load({ id: 'GitPanel', chunk: 'client.panel.js', factory: () => ({ create }) })
-```
-
-再由入口 `await require.async('./client.panel.js')` 取回(DSH 自己的侧边栏预览就这么加载 Excel 表格)。代价与约束:
-
-- **只能异步**:分片经 `/plugins/GitPanel/client.<名字>.js?rev=<当前版本>` 按需下发,因此 `apply` 是 `async` 的,且必须在注册任何席位之前把分片取回来(否则首屏可能渲染到还等着 bundle 的组件)。
-- **只向一侧依赖**:分片之间不互相 import,依赖关系全部由 `client.js` 的 `shared` 表显式接线;分片自己声明它要用到的名字,一个分片读了没接线的东西就是 `ReferenceError`,冒烟测试会当场报出来。
-- **每个文件都要登记**:`package.json` 的 `files` 用 `src/client.*.js` 一次性覆盖。
-- **分片 URL 只带包级版本**:DSH 按客户端入口的 mtime/ctime/size 算出包级 rev,分片经 `/plugins/GitPanel/client.<名字>.js?rev=<该 rev>` 下发并带 `immutable` 缓存。因此**只改分片**时 URL 不变,浏览器会拿住旧分片 —— 改分片后请**硬刷新**(Ctrl+Shift+R),或顺手动一下 `src/client.js`,或重启 DSH;改入口文件本身则会换掉全部 rev。
-- 资源地址修复仍然是**第一个**被接线的东西:它先于其它分片取回并装上,以保证页面解析任何资源地址之前它已经在位。
-
-### 通信协议
-
-浏览器半对每个操作发一个 JSON 信封,Host 半返回统一结果信封:
-
-```
+```jsonc
+// 一个请求一个操作;错误一律 200 + ok:false,400 只用于非 JSON 请求体,413 只用于超过 1 MiB
 POST /api/local-git
 { "op": "state", "args": { "workspaceRoot": "E:/ws", "path": "alpha" } }
-
-→ 200 { "ok": true,  "data": { ... } }
-→ 200 { "ok": false, "error": "the path is outside the workspace root" }
-→ 400 非 JSON 请求体;  413 请求体超过 1 MiB
+→ { "ok": true,  "data": { … } }
+→ { "ok": false, "error": "the path is outside the workspace root" }
 ```
 
-### 操作一览
-
-**读操作**(只读仓库状态):
-
-| `op` | 说明 | 关键参数 |
+| op | 类型 | 作用 |
 |---|---|---|
-| `repos` | 发现工作区根下的全部仓库(含子模块);同时回报生效的扫描深度 | `workspaceRoot` |
-| `state` | 当前分支、本地/远程分支、ahead/behind、子模块、全部改动文件 | `workspaceRoot`、`path` |
-| `log` | 提交历史(不含每提交文件统计,见 `commitFiles`),可按分支/文件过滤 | `limit`(1–200,默认 30)、`branch`、`file` |
-| `commitFiles` | 某一提交改动的文件与行数(`--no-renames`,以第一父提交为基准) | `commit` |
-| `diff` | 单文件 unified diff:指定 `commit` 时给出该提交对该文件的改动,否则给出索引 / 工作区改动(未跟踪文件也能给出);`wholeFile` 时把上下文扩到整个文件 | `file`、`staged`、`commit`、`wholeFile` |
+| `repos` | 读 | 发现工作区下的全部仓库(含子模块),并回报生效的扫描深度 |
+| `state` | 读 | 当前分支、本地/远程分支、ahead/behind、子模块、全部改动文件 |
+| `log` | 读 | 提交历史(可按分支 / 文件过滤,1–200 条;不含每提交文件统计) |
+| `commitFiles` | 读 | 某一个提交改动的文件与行数 |
+| `diff` | 读 | 单文件 unified diff(可指定 `commit`、`wholeFile`;未跟踪文件也能给出) |
+| `stage` / `unstage` | 写 | 暂存 / 取消暂存指定路径或全部 |
+| `commit` | 写 | 创建提交(`--all` / `--amend`) |
+| `push` / `fetch` / `pull` | 写 | 推送 / 只下载对象与远程跟踪引用 / 把上游整合进工作区 |
+| `checkout` | 写 | 切换分支、检出提交,可顺带新建分支 |
+| `deleteBranch` | 写 | 删除本地分支(默认安全删除) |
+| `reset` / `cherryPick` / `revert` | 写 | soft/mixed/hard 重置 / 摘取提交 / 用新提交还原 |
+| `amend` | 写 | 改写最新提交的信息 |
+| `submodule` | 写 | 子模块 init / update / sync |
 
-**写操作**(变更仓库状态):
+参数与语义以 `index.js` 的 `READ_OPERATIONS` / `WRITE_OPERATIONS` 为准(两者合起来就是上表)。
 
-| `op` | 说明 | 关键参数 |
-|---|---|---|
-| `stage` / `unstage` | 暂存 / 取消暂存指定路径或全部 | `paths` |
-| `commit` | 创建提交(可选 `--all` / `--amend`) | `message`、`paths`、`all`、`amend` |
-| `push` | 推送当前或指定分支 | `remote`、`branch`、`setUpstream` |
-| `fetch` | 下载远程对象与远程跟踪引用,不改工作区 | `remote`、`branch`、`prune` |
-| `pull` | 把当前分支的上游整合进工作区 | `remote`、`branch`、`ffOnly` |
-| `checkout` | 切换分支 / 检出提交,可新建分支 | `name`、`create`、`startPoint` |
-| `deleteBranch` | 删除本地分支(默认安全删除) | `name`、`force` |
-| `reset` | soft / mixed / hard 重置到指定提交 | `commit`、`mode` |
-| `cherryPick` | 摘取提交到当前分支 | `commit`、`record`、`noCommit` |
-| `revert` | 用一个新提交还原指定提交 | `commit`、`noCommit` |
-| `amend` | 改写最新提交的信息 | `message` |
-| `submodule` | 子模块 init / update / sync | `action` |
+### 安全与限额
 
----
+- **路径围栏**:所有带 `path` 的操作都经 `resolveInside` 解析(Windows 下大小写折叠),越界一律拒绝。
+- **认证路由**:经 `ctx.connection.fetch.register` 注册,继承 API 桥的 Host/Origin 围栏与会话认证,不是裸 webserver 路由。
+- **无 shell**:`git` 一律 `execFile` + argv 数组,路径前保留 `--`。
+- **限额**:请求体 ≤ 1 MiB;单次 `git` 60 s 超时、32 MiB 输出上限;发现扫描 ≤ 8 层 / 64 个仓库 / 20 000 个目录项;diff 弹窗最多渲染 3000 行两栏对照(超出给出截断提示)。
+- **不做昂贵的投机调用**:`git submodule status`(无子模块的仓库上约 1 s)只在仓库声明了子模块时才执行;每提交的文件统计改为选中时才读。
+- **不挂起**:`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`,失败以数据形式返回。
 
-## 安全模型
+### 浏览器半为什么分片
 
-- **路径围栏**:每个携带 `path` 的操作都经 `resolveInside` 解析,解析结果必须落在 `workspaceRoot` 之内(Windows 下做大小写折叠),越界一律拒绝 —— 插件永远只操作会话已拥有的目录。
-- **认证路由**:路由经 `ctx.connection.fetch.register` 注册,继承 API 桥的 Host/Origin 围栏与浏览器会话认证,不是裸 webserver 路由;未授权会话收到 401/403。
-- **无 shell**:一切 `git` 调用走 `execFile` + argv 数组,调用方提供的任何值都不会被 shell 解析;路径参数前保留 `--` 分隔符。
-- **限额护栏**:请求体 ≤ 1 MiB;单次 `git` 调用 60 s 超时、32 MiB 输出上限;发现扫描有深度 / 数量 / 目录项上限;差异弹窗最多渲染 3000 行两栏对照(整文件视角同样受此上限约束,超出时给出截断提示)。
-- **不做昂贵的投机调用**:`git submodule status` 在无子模块的仓库上也要整树扫描(实测约 1 s),因此只有声明了子模块的仓库才会执行它 —— 判定方式是 `.gitmodules` 中存在 `submodule.*.path` 条目,或索引里有 gitlink(mode 160000)条目;两者都没有的仓库不可能报告子模块。每提交的文件统计同理,改为选中该提交时才读取。
-- **不挂起**:`GIT_TERMINAL_PROMPT=0` 禁止交互式凭据提示,`GIT_OPTIONAL_LOCKS=0` 减少锁竞争;失败以数据形式返回,不阻塞面板。
+浏览器半没有打包器:DSH 把它当普通脚本加载,`client.js` 自己调 `window.__ModuleLoader__.load({ id, factory })` 注册工厂 —— `import` 不被允许,DSH 的 `require` 也只认平台种子与清单里 `inject` 的包。官方给零构建包留的通道是**包内分片**:与浏览器入口同级、名字匹配 `client.<名字>.js`,自己注册成 `{ id: 'GitPanel', chunk: 'client.panel.js', factory }`,再由入口 `await require.async('./client.panel.js')` 取回。
 
----
+- 因此 `apply` 是 `async` 的,且必须在注册任何席位之前把分片取回来。
+- 分片之间不互相依赖,依赖全部由 `client.js` 的 `shared` 接线表单向接出去。
+- **只改分片时要硬刷新**:分片 URL 只带包级版本(DSH 按浏览器入口的 mtime/ctime/size 算),只改分片不会换 URL,浏览器会拿住那份 `immutable` 缓存。改入口文件本身则会换掉全部版本。
 
-## 安装与使用
-
-### 前提
-
-- DSH ≥ `0.1.7-rc.1`,使用 Web 客户端的 profile
-- Host 机器的 `PATH` 中有 `git`
-
-### 挂载到 profile
-
-1. 把包安装进 profile 的依赖(`dsh plugin` 命令透传 pnpm 参数,或手动在 profile 的 `package.json` 记录依赖后安装),路径即本仓库根目录:
-
-   ```sh
-   dsh plugin --profile <name> add E:\owner\dsh-GitPanel
-   ```
-
-2. 在 profile 的 `cordis.patch.yml`(或以 `--patch` 叠加层)中加入插入块 —— 包内 `cordis.patch.yml` 即此内容:
-
-   ```yaml
-   - insert:
-       - id: GitPanel
-         name: 'GitPanel'
-   ```
-
-3. 重启 profile(启用 `dsh-hmr` 时自动重载)。
-
-### 使用
-
-打开 Web 客户端后:
-
-- 左侧**面板栏**出现 Git 图标,进入全页三栏 Git 面板;
-- **右侧边栏**的 guide 胶囊里也有 Git:点击即**打开全页面板并关掉那张标签页**,所以回到会话后右侧边栏不会残留 Git 标签页;
-- 顶栏常显**工作区目录**与**仓库**字段(下拉可切换),当前分支以芯片展示;面板打开时自动选中当前会话所在的工作区。
-- 插件页面「已安装」分组里的 **`GitPanel`** 打开即见 **「仓库发现」**、**「差异显示」** 与 **「文件预览」** 三组配置;输入后按保存写入 profile 配置,即时生效。
-
----
-
-## 开发
-
-无需安装任何依赖,Node(建议 ≥ 18,测试依赖内置 `fetch`/`Request`)与 `git` 即可。四个测试互相独立,全部通过退出码 0 报告:
-
-```sh
-node test/host.e2e.mjs      # Host 半端到端:临时工作区 + 真实 git 子进程 + 裸仓库远程,覆盖全部操作与安全拒绝
-node test/client.smoke.mjs  # 浏览器半冒烟:真实 ModuleLoader 契约 + React 替身 + 假 fetch,驱动面板全部状态
-node test/preview-fix.mjs   # 文件预览修复:Node 侧校验修复契约,并在真实无头 Chromium 里复现缺陷与修复
-node test/preview.mjs       # 视觉稿:在临时仓库上渲染真实组件,输出 preview/git-panel.html(明暗双主题 × 面板 / 紧凑 diff 弹窗 / 整文件 diff 弹窗,共 6 幅)
-```
-
-`test/preview-fix.mjs` 的第二半需要机器上装有 Chrome / Edge / Chromium:那个缺陷只在 Chromium 的解析器上出现,只有它能把"修复前无效、修复后有效"真正跑一遍。找不到浏览器时该半跳过(`skip`)而不是失败,Node 半始终运行。
-
-三个浏览器侧测试都经 `test/module-loader.mjs` 加载:它照 DSH 的模块系统实现包内分片契约(分片命名规则、`{ id, chunk }` 注册、每个键只 materialize 一次),`preview-fix.mjs` 的 Chromium 半还用真实 `<script>` 传输取分片。**不要**把 `client.js` 读成字符串直接 `new Function` 求值 —— 那样分片不会被请求,一个只能在测试里跑通的 bundle 会悄悄通过。冒烟测试另有一条**分片图**断言:目录里每个 `client.*.js` 都必须被入口请求并注册,反之新增分片也必须登记。
-
-调试用环境变量:
-
-| 变量 | 作用 |
-|---|---|
-| `DSH_GIT_KEEP=1` | 保留 e2e 的临时工作区与隔离 git 配置,便于排查 |
-| `DSH_SMOKE_TRACE=1` / `DSH_SMOKE_DEBUG=1` | 冒烟测试的追踪与文本转储 |
-| `DSH_PREVIEW_DEBUG=1` | 打印 preview 的 Host 调用日志 |
-
-修改样式后运行 `node test/preview.mjs`,打开 `preview/git-panel.html` 检查明暗两版效果。
-
-### 两半的加载时机不同
-
-浏览器半在**每次页面加载时重新取用** `client.js`,Host 半则只在 **DSH 进程启动时导入一次**。因此在长跑的 `dsh web` 进程上,刷新页面只会更新面板 UI:Host 侧的新操作(`fetch`、`pull`)与新参数(`diff` 的 `commit` / `wholeFile`)仍不可用 —— 直接调用会得到 `unknown operation`,而提交文件的差异会退化成"工作区 diff"因此为空。
-
-面板会自己识别这种状态:当 `repos` 没有回报 `discoveryDepth` 或 `wholeFileDiff`(两者都是当前契约的一部分),或某个新操作被拒为 `unknown operation` 时,顶栏下方会出现一条橙色横幅说明 Host 半是旧版本,并给出可执行的修复方式;此时提交文件列表会退回使用旧版历史页里的文件统计,空差异也不会被读成"该提交没有改动"。
-
-让改动生效有两种方式:
-
-- **重启 DSH 进程**(始终有效);
-- 或在 profile 的 `cordis.patch.yml` 里让 HMR 监听本包目录,Host 半随后在文件变化时热重载:
-
-  ```yaml
-  - id: hmr
-    name: "@deepseek-ai/dsh-hmr"
-    disabled: false
-    config:
-      root:
-        - E:/owner/dsh-GitPanel      # 指向本仓库;删掉该条目即回到 root: []
-  ```
-
----
-
-## 目录结构
+### 目录结构
 
 ```
 dsh-GitPanel/                             # 插件包 GitPanel(仓库根即包根)
-├─ package.json                          # bundle 清单(manifestVersion 1、导出映射、files 白名单)
+├─ package.json                          # 清单:导出映射 / client.inject / files 白名单
 ├─ cordis.patch.yml                      # Host 半的插入补丁
-├─ index.js                              # Host 半:发现 / git 子进程 / 解析器 / 路由
+├─ index.js                              # Host 半:发现 / git 子进程 / 解析器 / 路由 / 配置图
 ├─ icon.svg                              # 面板图标
-├─ src/                                  # 浏览器半(相当于上游包的 lib/);分片必须与 client.js 同级
-│  ├─ client.js                          # 浏览器半入口:词汇表 / shared 接线 / apply
-│  ├─ client.i18n.js                     # 分片:中英词典
-│  ├─ client.style.js                    # 分片:设计令牌样式表与 Git 图标路径
-│  ├─ client.rows.js                     # 分片:变更 / 分支 / 提交行,右键菜单,对话框
-│  ├─ client.diff.js                     # 分片:unified diff 解析、变更导航、并排视图与弹层
-│  ├─ client.branches.js                 # 分片:左栏(分支、远程、子模块、工作树与提交框)
-│  ├─ client.history.js                  # 分片:中栏(历史)与右栏(提交信息与文件)
-│  ├─ client.panel.js                    # 分片:整页面板(状态、Host 调用、工具栏、三栏组装)
-│  ├─ client.settings.js                 # 分片:插件页面上的配置卡片
-│  ├─ client.preview-fix.js              # 分片:资源地址修复及其地址读取
-│  └─ client.sidebar.js                  # 分片:右侧边栏的门与标题
-├─ README.md / LICENSE / AGENTS.md
-├─ locale/
-│  ├─ en.json                            # 插件卡片的包名与描述(英)
-│  └─ zh.json                            # 插件卡片的包名与描述(中)
-└─ test/
-   ├─ module-loader.mjs                  # 包内分片契约的测试替身(三个浏览器侧测试共用)
-   ├─ host.e2e.mjs                       # Host 端到端测试
-   ├─ client.smoke.mjs                   # 浏览器半渲染冒烟测试(含分片图校验)
-   ├─ preview-fix.mjs                    # 文件预览修复(Node + 真实 Chromium)
-   └─ preview.mjs                        # 双主题视觉稿生成器
+├─ src/                                  # 浏览器半(分片必须与 client.js 同级)
+│  ├─ client.js                          #   入口:词汇表 / shared 接线 / Host 传输 / apply
+│  ├─ client.panel.js                    #   整页面板:状态、Host 调用、工具栏、三栏组装
+│  ├─ client.branches.js                 #   左栏:分支、远程、子模块、工作树与提交框
+│  ├─ client.history.js                  #   中栏(历史)与右栏(提交信息与文件)
+│  ├─ client.rows.js                     #   变更 / 分支 / 提交行,右键菜单,对话框
+│  ├─ client.diff.js                     #   unified diff 解析、改动导航、并排视图与弹层
+│  ├─ client.settings.js                 #   插件页面上的配置卡片
+│  ├─ client.preview-fix.js              #   资源地址修复及其地址读取
+│  ├─ client.sidebar.js                  #   右侧边栏的门与标题
+│  ├─ client.i18n.js                     #   中英词典
+│  └─ client.style.js                    #   设计令牌样式表与 Git 图标路径
+├─ locale/{en,zh}.json                   # 插件卡片(插件列表与清单)的包名与描述
+├─ test/                                 # 四个无框架 Node 测试 + 分片契约替身
+└─ README.md / LICENSE / AGENTS.md
 ```
 
-## 参与开发
+### 开发与测试
 
-提交代码前请阅读 [AGENTS.md](AGENTS.md) —— 它定义了本仓库的架构不变量、代码风格、测试要求与红线清单。修改行为时同步更新本 README 的操作表。
+无需安装依赖,Node(≥ 18)与 `git` 即可;四个测试互相独立,全部通过时退出码 0:
+
+```sh
+node test/host.e2e.mjs      # Host 半端到端:临时工作区 + 真实 git + 裸仓库远程,覆盖全部操作与安全拒绝
+node test/client.smoke.mjs  # 浏览器半冒烟:真实 ModuleLoader 契约 + React 替身 + 假 fetch,驱动面板全部状态
+node test/preview-fix.mjs   # 文件预览修复:Node 契约 + 真实无头 Chromium 复现(无浏览器时该半 skip)
+node test/preview.mjs       # 视觉稿:输出 preview/git-panel.html(明暗双主题共 6 幅)
+```
+
+浏览器半在每次页面加载时重新取用,Host 半只在 DSH 进程启动时导入一次:长跑的 `dsh web` 上刷新页面只更新面板 UI,Host 侧的新操作要重启进程(或让 `dsh-hmr` 监听本包目录)才生效;面板会识别出旧 Host 并显示橙色横幅。改动前请读 [AGENTS.md](AGENTS.md)(架构不变量、代码风格、测试要求与红线)。
 
 ## License
 
