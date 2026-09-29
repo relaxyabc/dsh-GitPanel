@@ -572,6 +572,35 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * Merge one branch into the branch that is checked out.
+       *
+       * Git reads the message for the merge commit from `-m` here rather than
+       * from an editor, so the dialog supplies one; `fill` lets the notice name
+       * the branch that was integrated.
+       *
+       * @param {string} name - the branch to merge from.
+       * @param {string} value - the merge commit message from the dialog.
+       * @returns {Promise<void>} nothing.
+       */
+      async function mergeBranch(name, value) {
+        const text = String(value ?? '').trim()
+        if (text === '') return
+        const payload = await mutate('merge', { branch: name, message: text }, undefined)
+        setNotice(payload === null ? fill(t('notice.mergeConflicted'), { name }) : fill(t('notice.merged'), { name }))
+      }
+
+      /**
+       * Replay the branch that is checked out onto another commit.
+       *
+       * @param {string} name - the commit or branch to rebase onto.
+       * @returns {Promise<void>} nothing.
+       */
+      async function rebaseOnto(name) {
+        const payload = await mutate('rebase', { branch: name }, undefined)
+        setNotice(payload === null ? fill(t('notice.rebaseConflicted'), { name }) : fill(t('notice.rebased'), { name }))
+      }
+
+      /**
        * Build the branch context-menu rows.
        *
        * @param {object} branch - the branch under the pointer.
@@ -579,17 +608,52 @@ window.__ModuleLoader__.load({
        * @returns {Array<object>} the rows.
        */
       function branchMenu(branch, remote) {
+        // Merging and rebasing both change the branch that is checked out, so a
+        // remote-tracking row — where a checkout would first create a local
+        // branch — is named as the branch to integrate from, never as the target.
+        const mergeItem = {
+          label: fill(t('menu.merge'), { name: currentBranch ?? t('detached') }),
+          disabled: branch.current === true,
+          run: () =>
+            setDialog({
+              title: fill(t('dialog.merge.title'), { name: branch.name }),
+              text: fill(t('dialog.merge.text'), { name: branch.name, current: currentBranch ?? t('detached') }),
+              warning: t('dialog.merge.warning'),
+              input: fill(t('dialog.merge.message'), { name: branch.name }),
+              multiline: true,
+              confirm: t('dialog.merge.confirm'),
+              run: (value) => mergeBranch(branch.name, value),
+            }),
+        }
+        const rebaseItem = {
+          label: fill(t('menu.rebase'), { name: branch.name }),
+          disabled: branch.current === true,
+          run: () =>
+            setDialog({
+              title: fill(t('dialog.rebase.title'), { name: branch.name }),
+              text: fill(t('dialog.rebase.text'), { name: branch.name, current: currentBranch ?? t('detached') }),
+              warning: t('dialog.rebase.warning'),
+              confirm: t('dialog.rebase.confirm'),
+              run: () => rebaseOnto(branch.name),
+            }),
+        }
         if (remote) {
           const local = branch.name.replace(/^[^/]+\//, '')
           return [
             { label: `${t('checkout')} "${local}"`, run: () => mutate('checkout', { name: local, create: true, startPoint: branch.name }, fill(t('notice.checkedOut'), { name: local })) },
             { label: `${t('cherryPick')} into ${currentBranch ?? 'HEAD'}`, run: () => mutate('cherryPick', { commit: branch.name }, fill(t('notice.cherryPicked'), { name: branch.name })) },
             { separator: true },
+            mergeItem,
+            rebaseItem,
+            { separator: true },
             { label: t('copyHash'), run: () => copyText(branch.name) },
           ]
         }
         return [
           { label: `${t('checkout')} ${branch.name}`, disabled: branch.current === true, run: () => mutate('checkout', { name: branch.name }, fill(t('notice.switched'), { name: branch.name })) },
+          { separator: true },
+          mergeItem,
+          rebaseItem,
           { separator: true },
           {
             label: t('deleteBranch'),
@@ -691,6 +755,29 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
+        // A stopped merge or rebase is neither an error the user typed nor a
+        // working-tree edit: it is a repository state that needs deciding on, so
+        // it gets the banner with the buttons that resolve it while the toolbar
+        // controls keep working.
+        state?.inProgress === 'merge'
+          ? h(
+              'div',
+              { className: cx('git-panel-banner', 'git-panel-banner-warn', 'git-panel-banner-actions') },
+              h('span', { className: 'git-panel-banner-text' }, t('mergeInProgress')),
+              h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: () => mutate('commit', { noEdit: true }, t('notice.mergeCompleted')) }, t('mergeComplete')),
+              h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: () => mutate('mergeAbort', {}, t('notice.mergeAborted')) }, t('mergeAbort')),
+            )
+          : state?.inProgress === 'rebase'
+            ? h(
+                'div',
+                { className: cx('git-panel-banner', 'git-panel-banner-warn', 'git-panel-banner-actions') },
+                h('span', { className: 'git-panel-banner-text' }, t('rebaseInProgress')),
+                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: () => mutate('rebaseContinue', {}, t('notice.rebaseContinued')) }, t('rebaseContinue')),
+                h('button', { type: 'button', className: 'git-panel-btn', disabled: busy, onClick: () => mutate('rebaseAbort', {}, t('notice.rebaseAborted')) }, t('rebaseAbort')),
+              )
+            : state?.inProgress === undefined || state.inProgress === null
+              ? null
+              : h('div', { className: cx('git-panel-banner', 'git-panel-banner-warn') }, fill(t('inProgress.other'), { kind: state.inProgress })),
         error === null ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-error') }, error),
         staleHost ? h('div', { className: cx('git-panel-banner', 'git-panel-banner-warn') }, t('notice.staleHost')) : null,
         notice === null ? null : h('div', { className: cx('git-panel-banner', 'git-panel-banner-ok') }, notice),

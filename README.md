@@ -62,6 +62,7 @@
 **分支**
 - 本地 / 远程分组、可折叠、可按名称过滤;当前分支带 `HEAD` 标记,显示上游与最新提交说明。
 - 右键或双击:切换分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交新建分支。
+- 分支右键菜单可**合并 / 变基**:「Merge into <当前分支>」把该分支并入当前分支(合并提交的信息在对话框里预填,可直接编辑);「Rebase <what> onto this」把当前分支重放到该分支上。二者都先弹确认框(说明工作区必须干净、变基会重写提交),**冲突**时 Git 停下来,面板显示黄色横幅提示,并给出「Complete merge / Abort merge」(合并)或「Continue rebase / Abort rebase」(变基)按钮;冲突文件与普通改动一样列在工作区里,解决后 stage 即可。
 
 **提交历史与 diff**
 - 每页最多 200 条(作者、相对时间、ref 装饰);每提交的文件统计在**选中该提交时**才单独读取,历史列表始终是一次轻量调用。
@@ -126,6 +127,9 @@ POST /api/local-git
 | `deleteBranch` | 写 | 删除本地分支(默认安全删除) |
 | `reset` / `cherryPick` / `revert` | 写 | soft/mixed/hard 重置 / 摘取提交 / 用新提交还原 |
 | `amend` | 写 | 改写最新提交的信息 |
+| `merge` | 写 | 把指定分支并入当前分支(`--no-ff` / `--ff-only` / `--squash` / `--no-commit`;会提交时必须带信息) |
+| `rebase` | 写 | 把当前分支重放到指定分支上(可 `--interactive` / `--autostash`) |
+| `mergeAbort` / `rebaseAbort` / `rebaseContinue` | 写 | 解冲突期间的收尾:撤销合并 / 撤销变基 / 解决后继续变基 |
 | `submodule` | 写 | 子模块 init / update / sync |
 
 参数与语义以 `index.js` 的 `READ_OPERATIONS` / `WRITE_OPERATIONS` 为准(两者合起来就是上表)。
@@ -137,7 +141,8 @@ POST /api/local-git
 - **无 shell**:`git` 一律 `execFile` + argv 数组,路径前保留 `--`。
 - **限额**:请求体 ≤ 1 MiB;单次 `git` 60 s 超时、32 MiB 输出上限;发现扫描 ≤ 8 层 / 64 个仓库 / 20 000 个目录项;diff 弹窗最多渲染 3000 行两栏对照(超出给出截断提示)。
 - **不做昂贵的投机调用**:`git submodule status`(无子模块的仓库上约 1 s)只在仓库声明了子模块时才执行;每提交的文件统计改为选中时才读。
-- **不挂起**:`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`,失败以数据形式返回。
+- **不挂起**:`GIT_TERMINAL_PROMPT=0`、`GIT_OPTIONAL_LOCKS=0`,失败以数据形式返回;合并与变基的提交信息一律由参数或 Git 已保存的 `MERGE_MSG` 提供(`rebase` / `rebaseContinue` 另带一次性 `GIT_EDITOR=:`),面板没有编辑器可回答 Git 的提示。
+- **不猜测状态**:`state` 顺带报告仓库是否停在某个操作中(`inProgress`:`merge` / `rebase` / `cherry-pick` / `revert` / `bisect`),标记经 `git rev-parse --git-path` 解析,链接工作树同样正确;合并与变基的冲突路径由 `git status --porcelain` 读出并写进错误信息。
 
 ### 浏览器半为什么分片
 

@@ -101,6 +101,10 @@ window.__ModuleLoader__.load({
       '.git-panel-banner-error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#cf222e) 12%,transparent);color:var(--dsw-alias-state-error-primary,#cf222e)}',
       '.git-panel-banner-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#1a7f37) 12%,transparent);color:var(--dsw-alias-state-success-primary,#1a7f37)}',
       '.git-panel-banner-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#9a6700) 14%,transparent);color:var(--dsw-alias-state-warn-primary,#9a6700)}',
+      // An in-progress merge or rebase is a banner with decisions in it: the
+      // message keeps the free space and the actions stay on the right.
+      '.git-panel-banner-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.git-panel-banner-text{flex:1 1 200px;min-width:0}',
       '.git-panel-sbs-layout{flex:1;min-height:0;display:flex;align-items:stretch}',
       '.git-panel-sbs-scroll{flex:1;min-width:0;min-height:0;overflow:auto}',
       '.git-panel-sbs-wrap{display:flex;align-items:flex-start;min-height:100%}',

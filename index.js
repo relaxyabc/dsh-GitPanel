@@ -10,7 +10,8 @@
  *
  * Reads are `repos`, `state`, `log`, `commitFiles`, and `diff`; writes are
  * `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`, `checkout`,
- * `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`, and `submodule`.
+ * `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`, `merge`,
+ * `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`, and `submodule`.
  * The plugin Config holds the repository discovery depth and the whole-file diff
  * switch; both are plain fields the Plugins page edits through the Host settings
  * service.
@@ -141,8 +142,32 @@ const MAX_DISCOVERY_ENTRIES = 20_000
 /** Record separator separating two commit records in `git log` output. */
 const RS = '\u001e'
 
+/**
+ * The index/worktree status pairs `git status --porcelain` reports for an
+ * unmerged path. A merge and a rebase leave the same set behind, and only those
+ * pairs name a conflict rather than an ordinary edit.
+ */
+const CONFLICT_STATUS_LETTERS = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
+
 /** Field separator separating two fields of one record. */
 const US = '\u001f'
+
+/**
+ * The markers Git leaves behind while an operation is stopped for the user.
+ *
+ * Exactly one of these can be in force, so the first field whose marker exists
+ * is the operation Git will resume or unwind. Merge and rebase are the two the
+ * panel drives; the other three are reported so a stopped repository is never
+ * mistaken for an ordinary dirty one.
+ */
+const IN_PROGRESS_MARKERS = [
+  { field: 'merge', marker: 'MERGE_HEAD' },
+  { field: 'cherry-pick', marker: 'CHERRY_PICK_HEAD' },
+  { field: 'revert', marker: 'REVERT_HEAD' },
+  { field: 'rebase', marker: 'rebase-merge' },
+  { field: 'rebase', marker: 'rebase-apply' },
+  { field: 'bisect', marker: 'BISECT_LOG' },
+]
 
 /**
  * Run one `git` command in a directory.
@@ -151,11 +176,17 @@ const US = '\u001f'
  * by a shell. A non-zero exit is reported as data, not thrown: `git` uses the
  * exit status for ordinary answers such as "the path is untracked".
  *
+ * `overrides` names extra environment variables for one invocation. It exists so
+ * a rebase can carry `GIT_EDITOR=:`: Git opens the editor for a commit message
+ * the Host has no terminal for, and a spawn waiting on one would only end at the
+ * timeout. Nothing else may widen the environment.
+ *
  * @param {string} cwd - absolute directory to run in.
  * @param {readonly string[]} args - complete argv after the program name.
+ * @param {Record<string, string>} [overrides] - extra environment variables for this invocation.
  * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number }>} the invocation outcome.
  */
-function runGit(cwd, args) {
+function runGit(cwd, args, overrides) {
   return new Promise((settle) => {
     execFile(
       'git',
@@ -165,7 +196,7 @@ function runGit(cwd, args) {
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: GIT_MAX_BUFFER,
         windowsHide: true,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', ...overrides },
       },
       (error, stdout, stderr) => {
         settle({
@@ -206,6 +237,25 @@ async function gitOrThrow(cwd, args) {
 function requireText(value) {
   if (typeof value !== 'string' || value.trim() === '') throw new Error('a non-empty string is required')
   return value
+}
+
+/**
+ * Assert a value is usable as a bare Git ref.
+ *
+ * A ref travels as one argv element, so it can never reach a shell; what it can
+ * still do is be read as an option. Refusing a leading dash keeps a caller from
+ * turning a branch name into `--force`-style behaviour on the merge and rebase
+ * commands, whose flags are the difference between an ordinary history and a
+ * rewritten one.
+ *
+ * @param {unknown} value - candidate ref.
+ * @returns {string} the value when it is usable.
+ * @throws {Error} when the value is missing, empty, or option-shaped.
+ */
+function requireBareRef(value) {
+  const ref = requireText(value)
+  if (ref.startsWith('-')) throw new Error(`"${ref}" is not a valid branch name`)
+  return ref
 }
 
 /**
@@ -617,16 +667,18 @@ async function readState(repositoryPath) {
   })
 
   const branchFormat = `--format=%(refname:short)${US}%(HEAD)${US}%(upstream:short)${US}%(upstream:track)${US}%(contents:subject)${US}%(committerdate:unix)`
-  const [branchResult, remoteResult, submodules, remoteNames] = await Promise.all([
+  const [branchResult, remoteResult, submodules, remoteNames, inProgress] = await Promise.all([
     runGit(repositoryPath, ['branch', branchFormat]),
     runGit(repositoryPath, ['branch', '--remotes', branchFormat]),
     readSubmodules(repositoryPath),
     runGit(repositoryPath, ['remote']),
+    readInProgress(repositoryPath),
   ])
 
   return {
     root,
     name: root.split('/').pop() ?? root,
+    inProgress,
     branch: parsed.head,
     detached: parsed.detached,
     upstream: parsed.upstream,
@@ -674,6 +726,34 @@ function parseNumstat(raw) {
     })
   }
   return rows
+}
+
+/**
+ * The operation one repository is currently stopped inside, if any.
+ *
+ * Every marker is named by `git rev-parse --git-path`, so a linked worktree —
+ * where the state lives under the common directory rather than in a `.git`
+ * beside the work tree — answers exactly like a primary one. The probes run in
+ * parallel and answer local files, so the whole check costs a handful of
+ * short-lived spawns rather than any work proportional to the repository.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<string|null>} `merge`, `rebase`, `cherry-pick`, `revert`, `bisect`, or null.
+ */
+async function readInProgress(repositoryPath) {
+  const probes = await Promise.all(
+    IN_PROGRESS_MARKERS.map(async (entry) => {
+      const named = await runGit(repositoryPath, ['rev-parse', '--git-path', entry.marker])
+      // The answer is relative to the repository — `.git/MERGE_HEAD` in a primary
+      // checkout — and Node would resolve that against its own working directory,
+      // so it is joined onto the repository the subprocess ran in.
+      const path = named.ok ? named.stdout.trim() : ''
+      if (path === '') return { field: entry.field, present: false }
+      const info = await stat(resolve(repositoryPath, path)).catch(() => null)
+      return { field: entry.field, present: info !== null }
+    }),
+  )
+  return probes.find((entry) => entry.present === true)?.field ?? null
 }
 
 /**
@@ -789,16 +869,24 @@ async function writeStage(repositoryPath, args) {
 /**
  * Create one commit.
  *
+ * `noEdit` commits with the message Git already saved for a stopped merge or
+ * cherry-pick, so it carries no `-m` at all: Git gives `-m` precedence over
+ * `--no-edit`, and passing one would replace the very message the user would
+ * otherwise have to retype.
+ *
  * @param {string} repositoryPath - absolute repository path.
  * @param {object} args - request arguments.
  * @returns {Promise<object>} the new commit hash and subject.
  */
 async function writeCommit(repositoryPath, args) {
-  const message = requireText(args.message)
+  const noEdit = args.noEdit === true
+  const message = noEdit ? '' : requireText(args.message)
   if (Array.isArray(args.paths) && args.paths.length > 0) {
     await gitOrThrow(repositoryPath, ['add', '--', ...args.paths.filter((entry) => typeof entry === 'string')])
   }
-  const argv = ['commit', '-m', message]
+  const argv = ['commit']
+  if (noEdit) argv.push('--no-edit')
+  else argv.push('-m', message)
   if (args.amend === true) argv.push('--amend')
   if (args.all === true) argv.push('--all')
   const output = await gitOrThrow(repositoryPath, argv)
@@ -951,6 +1039,129 @@ async function writeAmend(repositoryPath, args) {
   const output = await gitOrThrow(repositoryPath, ['commit', '--amend', '-m', message])
   const hash = (await gitOrThrow(repositoryPath, ['rev-parse', 'HEAD'])).trim()
   return { hash, summary: output.trim() }
+}
+
+/**
+ * Turn a refused `git` invocation into an error the panel can show.
+ *
+ * A conflict is the ordinary way a merge or rebase stops, so the raw stderr —
+ * "Automatic merge failed; fix conflicts and then commit the result." — says
+ * nothing about which paths are in conflict. Reading those paths out of the
+ * worktree costs one cheap status call and turns the failure into an actionable
+ * report. Any other failure keeps Git's own message.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {{ ok: boolean, stdout: string, stderr: string, code: number }} result - the refused invocation.
+ * @returns {Promise<Error>} the error to throw.
+ */
+async function conflictError(repositoryPath, result) {
+  const detail = result.stderr.trim() || result.stdout.trim() || `git exited with ${result.code}`
+  const status = await runGit(repositoryPath, ['status', '--porcelain', '-z', '--untracked-files=no'])
+  const conflicts = []
+  for (const part of status.stdout.split('\0')) {
+    if (part.length < 4 || !CONFLICT_STATUS_LETTERS.has(part.slice(0, 2))) continue
+    conflicts.push(part.slice(3))
+  }
+  if (conflicts.length === 0) return new Error(detail)
+  return new Error(`${detail} Conflicted paths: ${conflicts.join(', ')}`)
+}
+
+/**
+ * Merge one branch into the current one.
+ *
+ * The caller chooses the integration shape rather than the panel: no flag is an
+ * ordinary merge (fast-forwarding when it can), `--no-ff` records a merge commit
+ * even when the merge could fast-forward, `--ff-only` refuses anything else, and
+ * `squash` stages the result without committing. Git would open an editor for
+ * the merge message, which a panel has no way to answer, so a merge that creates
+ * a commit always carries `-m`.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<object>} Git's own report.
+ */
+async function writeMerge(repositoryPath, args) {
+  const branch = requireBareRef(args.branch)
+  const message = typeof args.message === 'string' ? args.message.trim() : ''
+  const squash = args.squash === true
+  if ((args.noCommit === true || squash) && args.ffOnly === true) throw new Error('--ff-only cannot be combined with --no-commit or --squash')
+  if (args.noFf !== true && args.ffOnly !== true && args.noCommit !== true && !squash && message === '') {
+    throw new Error('a merge message is required; the panel has no editor to answer Git\'s prompt with')
+  }
+  const argv = ['merge']
+  if (squash) argv.push('--squash')
+  if (args.noFf === true) argv.push('--no-ff')
+  if (args.ffOnly === true) argv.push('--ff-only')
+  if (args.noCommit === true) argv.push('--no-commit')
+  if (message !== '') argv.push('-m', message)
+  argv.push(branch)
+  const result = await runGit(repositoryPath, argv)
+  if (!result.ok) throw await conflictError(repositoryPath, result)
+  return { summary: (result.stdout.trim() || result.stderr.trim()) }
+}
+
+/**
+ * Replay the current branch onto another commit.
+ *
+ * The branch is the second argv element and `--onto` is deliberately absent:
+ * a plain `git rebase <upstream>` moves the current branch onto `upstream`, and
+ * `startPoint` narrows which commits are replayed. `GIT_EDITOR` is the
+ * no-op command for this invocation only, so an `--interactive` list or a
+ * reworded commit can never block a Host that has no terminal to open it on.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<object>} Git's own report.
+ */
+async function writeRebase(repositoryPath, args) {
+  const branch = requireBareRef(args.branch)
+  const argv = ['rebase']
+  if (args.interactive === true) argv.push('--interactive')
+  if (args.autostash === true) argv.push('--autostash')
+  argv.push(branch)
+  if (typeof args.startPoint === 'string' && args.startPoint !== '') argv.push(requireBareRef(args.startPoint))
+  const result = await runGit(repositoryPath, argv, { GIT_EDITOR: ':' })
+  if (!result.ok) throw await conflictError(repositoryPath, result)
+  return { summary: (result.stdout.trim() || result.stderr.trim()) }
+}
+
+/**
+ * Unwind a stopped merge, restoring the pre-merge state.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<object>} Git's own report.
+ */
+async function writeMergeAbort(repositoryPath) {
+  const output = await gitOrThrow(repositoryPath, ['merge', '--abort'])
+  return { summary: output.trim() }
+}
+
+/**
+ * Unwind a stopped rebase, restoring the branch that was being rebased.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<object>} Git's own report.
+ */
+async function writeRebaseAbort(repositoryPath) {
+  const output = await gitOrThrow(repositoryPath, ['rebase', '--abort'])
+  return { summary: output.trim() }
+}
+
+/**
+ * Resume a stopped rebase after its conflicts were resolved.
+ *
+ * The commit Git creates for the replayed change reuses the message it already
+ * saved, so the editor is replaced by the no-op command here as well: a
+ * `rebase --continue` that opened an editor would hang until the 60 s cap and
+ * then report a timeout instead of a completed rebase.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<object>} Git's own report.
+ */
+async function writeRebaseContinue(repositoryPath) {
+  const result = await runGit(repositoryPath, ['rebase', '--continue'], { GIT_EDITOR: ':' })
+  if (!result.ok) throw await conflictError(repositoryPath, result)
+  return { summary: (result.stdout.trim() || result.stderr.trim()) }
 }
 
 /**
@@ -1172,6 +1383,41 @@ const WRITE_OPERATIONS = {
    * @returns {Promise<object>} git's report.
    */
   submodule: (args) => writeSubmodule(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Merge one branch into the current one.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} Git's report.
+   */
+  merge: (args) => writeMerge(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Replay the current branch onto another commit.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} Git's report.
+   */
+  rebase: (args) => writeRebase(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Unwind a stopped merge.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} Git's report.
+   */
+  mergeAbort: (args) => writeMergeAbort(resolveInside(args.workspaceRoot, args.path)),
+  /**
+   * Unwind a stopped rebase.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} Git's report.
+   */
+  rebaseAbort: (args) => writeRebaseAbort(resolveInside(args.workspaceRoot, args.path)),
+  /**
+   * Resume a stopped rebase.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} Git's report.
+   */
+  rebaseContinue: (args) => writeRebaseContinue(resolveInside(args.workspaceRoot, args.path)),
 }
 
 /**

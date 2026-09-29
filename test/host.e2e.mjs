@@ -492,6 +492,182 @@ try {
   const aheadState = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
   check(aheadState.ahead === 1, 'ahead counts unpublished commits', aheadState.ahead)
 
+  // ---- merge -------------------------------------------------------------------
+  // A repository of its own: every case below leaves commits and branches behind,
+  // and `alpha` is already carrying the fixture's remote history.
+  console.log('\nmerge')
+  const mergeRepo = join(root, 'mergerepo')
+  mkdirSync(mergeRepo, { recursive: true })
+  git(mergeRepo, ['init', '-b', 'main'])
+  writeFileSync(join(mergeRepo, 'base.txt'), 'base\n')
+  git(mergeRepo, ['add', '-A'])
+  git(mergeRepo, ['commit', '-m', 'base'])
+  git(mergeRepo, ['checkout', '-b', 'feature'])
+  writeFileSync(join(mergeRepo, 'feature.txt'), 'feature\n')
+  git(mergeRepo, ['add', '-A'])
+  git(mergeRepo, ['commit', '-m', 'feature work'])
+  git(mergeRepo, ['checkout', 'main'])
+
+  const fastForwarded = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'feature', message: 'Merge branch feature' })
+  check(fastForwarded.body.ok === true, 'merge succeeds', fastForwarded.body)
+  check((await call('log', { workspaceRoot: root, path: 'mergerepo', limit: 1 })).body.data.commits[0].subject === 'feature work', 'a fast-forwardable merge fast-forwards instead of committing')
+
+  // A branch that cannot fast-forward: --no-ff must still record the join.
+  git(mergeRepo, ['checkout', '-b', 'joined'])
+  writeFileSync(join(mergeRepo, 'joined.txt'), 'joined\n')
+  git(mergeRepo, ['add', '-A'])
+  git(mergeRepo, ['commit', '-m', 'join work'])
+  git(mergeRepo, ['checkout', 'main'])
+  writeFileSync(join(mergeRepo, 'main.txt'), 'main\n')
+  git(mergeRepo, ['add', '-A'])
+  git(mergeRepo, ['commit', '-m', 'main work'])
+  const noFastForward = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'joined', message: 'Merge branch joined' })
+  check(noFastForward.body.ok === true, 'a --no-ff merge message is accepted', noFastForward.body)
+  const mergeCommit = (await call('log', { workspaceRoot: root, path: 'mergerepo', limit: 1 })).body.data.commits[0]
+  check(mergeCommit.subject === 'Merge branch joined', 'the merge commits with the message the caller supplied', mergeCommit.subject)
+  check(mergeCommit.parents.length === 2, 'the merge commit has two parents', mergeCommit.parents)
+
+  // Two branches editing one line: the ordinary way a merge stops.
+  git(mergeRepo, ['checkout', '-b', 'clash', 'HEAD~1'])
+  writeFileSync(join(mergeRepo, 'base.txt'), 'clash\n')
+  git(mergeRepo, ['commit', '-am', 'clash the line'])
+  git(mergeRepo, ['checkout', 'main'])
+  writeFileSync(join(mergeRepo, 'base.txt'), 'main\n')
+  git(mergeRepo, ['commit', '-am', 'main the line'])
+  const conflicted = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'clash', message: 'Merge branch clash' })
+  check(conflicted.body.ok === false, 'a conflicting merge is refused as data', conflicted.body)
+  check(String(conflicted.body.error ?? '').includes('base.txt'), 'the refusal names the conflicted path', conflicted.body.error)
+  const duringMerge = (await call('state', { workspaceRoot: root, path: 'mergerepo' })).body.data
+  check(duringMerge.inProgress === 'merge', 'a stopped merge is reported in progress', duringMerge.inProgress)
+  check(duringMerge.files.some((entry) => entry.status === 'U'), 'the conflicted path shows as unmerged', duringMerge.files)
+
+  const abortedMerge = await call('mergeAbort', { workspaceRoot: root, path: 'mergerepo' })
+  check(abortedMerge.body.ok === true, 'mergeAbort succeeds', abortedMerge.body)
+  const afterMergeAbort = (await call('state', { workspaceRoot: root, path: 'mergerepo' })).body.data
+  check(afterMergeAbort.inProgress === null && afterMergeAbort.files.length === 0, 'aborting a merge restores the committed tree', afterMergeAbort.files)
+
+  // Resolving the conflict and committing with Git's own saved message is what
+  // the panel's "complete merge" control does.
+  await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'clash', message: 'Merge branch clash' })
+  writeFileSync(join(mergeRepo, 'base.txt'), 'resolved\n')
+  await call('stage', { workspaceRoot: root, path: 'mergerepo', paths: ['base.txt'] })
+  const completed = await call('commit', { workspaceRoot: root, path: 'mergerepo', noEdit: true })
+  check(completed.body.ok === true, 'the stopped merge is completed by an ordinary commit', completed.body)
+  const afterComplete = (await call('state', { workspaceRoot: root, path: 'mergerepo' })).body.data
+  check(afterComplete.inProgress === null, 'completing the merge clears the in-progress state', afterComplete.inProgress)
+  // `noEdit` means Git's own saved merge message, not the placeholder the panel
+  // passes alongside it — which is what lets the banner complete a merge without
+  // making the user retype it.
+  const completedSubject = (await call('log', { workspaceRoot: root, path: 'mergerepo', limit: 1 })).body.data.commits[0].subject
+  check(completedSubject.startsWith('Merge branch'), 'the completed merge keeps the message Git saved', completedSubject)
+
+  // --ff-only refuses a branch that cannot fast-forward.
+  git(mergeRepo, ['checkout', '-b', 'diverged', 'HEAD~2'])
+  writeFileSync(join(mergeRepo, 'diverged.txt'), 'diverged\n')
+  git(mergeRepo, ['add', '-A'])
+  git(mergeRepo, ['commit', '-m', 'diverged work'])
+  git(mergeRepo, ['checkout', 'main'])
+  const refusedff = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'diverged', ffOnly: true })
+  check(refusedff.body.ok === false, '--ff-only refuses a branch that cannot fast-forward', refusedff.body)
+  const afterRefusedff = (await call('state', { workspaceRoot: root, path: 'mergerepo' })).body.data
+  check(afterRefusedff.inProgress === null, 'a refused fast-forward leaves nothing in progress', afterRefusedff.inProgress)
+
+  // A squash stages the result and commits nothing.
+  const squashed = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'diverged', squash: true })
+  check(squashed.body.ok === true, 'a squash merge succeeds without a message', squashed.body)
+  const afterSquash = (await call('state', { workspaceRoot: root, path: 'mergerepo' })).body.data
+  check(afterSquash.files.some((entry) => entry.path === 'diverged.txt' && entry.staged === true), 'a squash merge leaves its result staged', afterSquash.files)
+  check(afterSquash.inProgress === null, 'a squash merge is not a stopped merge', afterSquash.inProgress)
+  await call('reset', { workspaceRoot: root, path: 'mergerepo', commit: 'HEAD', mode: 'hard' })
+
+  // ---- rebase ------------------------------------------------------------------
+  console.log('\nrebase')
+  const rebaseRepo = join(root, 'rebaserepo')
+  mkdirSync(rebaseRepo, { recursive: true })
+  git(rebaseRepo, ['init', '-b', 'main'])
+  writeFileSync(join(rebaseRepo, 'r.txt'), 'one\n')
+  git(rebaseRepo, ['add', '-A'])
+  git(rebaseRepo, ['commit', '-m', 'first'])
+  git(rebaseRepo, ['checkout', '-b', 'topic'])
+  writeFileSync(join(rebaseRepo, 'topic.txt'), 'topic\n')
+  git(rebaseRepo, ['add', '-A'])
+  git(rebaseRepo, ['commit', '-m', 'topic work'])
+  git(rebaseRepo, ['checkout', 'main'])
+  writeFileSync(join(rebaseRepo, 'main.txt'), 'main\n')
+  git(rebaseRepo, ['add', '-A'])
+  git(rebaseRepo, ['commit', '-m', 'main work'])
+  git(rebaseRepo, ['checkout', 'topic'])
+  const rebased = await call('rebase', { workspaceRoot: root, path: 'rebaserepo', branch: 'main' })
+  check(rebased.body.ok === true, 'rebase succeeds', rebased.body)
+  const rebasedLog = (await call('log', { workspaceRoot: root, path: 'rebaserepo', limit: 10 })).body.data.commits
+  check(rebasedLog[0]?.subject === 'topic work' && rebasedLog[1]?.subject === 'main work', 'rebase replays the topic onto main', rebasedLog.map((entry) => entry.subject))
+
+  // A conflict stops the rebase and leaves the repository resumable.
+  const rebaseConflict = join(root, 'rebase-conflict')
+  mkdirSync(rebaseConflict, { recursive: true })
+  git(rebaseConflict, ['init', '-b', 'main'])
+  writeFileSync(join(rebaseConflict, 'c.txt'), 'shared\n')
+  git(rebaseConflict, ['add', '-A'])
+  git(rebaseConflict, ['commit', '-m', 'seed'])
+  git(rebaseConflict, ['checkout', '-b', 'topic'])
+  writeFileSync(join(rebaseConflict, 'c.txt'), 'topic\n')
+  git(rebaseConflict, ['commit', '-am', 'topic edit'])
+  git(rebaseConflict, ['checkout', 'main'])
+  writeFileSync(join(rebaseConflict, 'c.txt'), 'main\n')
+  git(rebaseConflict, ['commit', '-am', 'main edit'])
+  git(rebaseConflict, ['checkout', 'topic'])
+  const stopped = await call('rebase', { workspaceRoot: root, path: 'rebase-conflict', branch: 'main' })
+  check(stopped.body.ok === false, 'a conflicting rebase is refused as data', stopped.body)
+  const duringRebase = (await call('state', { workspaceRoot: root, path: 'rebase-conflict' })).body.data
+  check(duringRebase.inProgress === 'rebase', 'a stopped rebase is reported in progress', duringRebase.inProgress)
+  check(duringRebase.detached === true, 'a stopped rebase reports the detached HEAD Git uses', duringRebase)
+
+  const abortedRebase = await call('rebaseAbort', { workspaceRoot: root, path: 'rebase-conflict' })
+  check(abortedRebase.body.ok === true, 'rebaseAbort succeeds', abortedRebase.body)
+  const afterRebaseAbort = (await call('state', { workspaceRoot: root, path: 'rebase-conflict' })).body.data
+  check(afterRebaseAbort.inProgress === null && afterRebaseAbort.branch === 'topic', 'aborting a rebase restores the branch being rebased', { state: afterRebaseAbort.branch, inProgress: afterRebaseAbort.inProgress })
+
+  // Resuming needs the conflict resolved and staged first.
+  await call('rebase', { workspaceRoot: root, path: 'rebase-conflict', branch: 'main' })
+  writeFileSync(join(rebaseConflict, 'c.txt'), 'resolved\n')
+  await call('stage', { workspaceRoot: root, path: 'rebase-conflict', paths: ['c.txt'] })
+  const continued = await call('rebaseContinue', { workspaceRoot: root, path: 'rebase-conflict' })
+  check(continued.body.ok === true, 'rebaseContinue succeeds once the conflict is staged', continued.body)
+  const afterContinue = (await call('state', { workspaceRoot: root, path: 'rebase-conflict' })).body.data
+  check(afterContinue.inProgress === null && afterContinue.branch === 'topic', 'continuing finishes the rebase on the original branch', { state: afterContinue.branch, inProgress: afterContinue.inProgress })
+  const continueLog = (await call('log', { workspaceRoot: root, path: 'rebase-conflict', limit: 10 })).body.data.commits
+  check(continueLog[0]?.subject === 'topic edit', 'the replayed commit keeps its own message', continueLog.map((entry) => entry.subject))
+
+  // ---- merge and rebase refusals -----------------------------------------------
+  console.log('\nmerge and rebase refusals')
+  const escapedMerge = await call('merge', { workspaceRoot: alpha, path: '../libsource', branch: 'main', message: 'x' })
+  check(escapedMerge.body.ok === false, 'merge refuses a path outside the workspace root', escapedMerge.body)
+  const escapedRebase = await call('rebase', { workspaceRoot: alpha, path: '../libsource', branch: 'main' })
+  check(escapedRebase.body.ok === false, 'rebase refuses a path outside the workspace root', escapedRebase.body)
+  const escapedMergeAbort = await call('mergeAbort', { workspaceRoot: alpha, path: '../libsource' })
+  check(escapedMergeAbort.body.ok === false, 'mergeAbort refuses a path outside the workspace root', escapedMergeAbort.body)
+  const escapedRebaseAbort = await call('rebaseAbort', { workspaceRoot: alpha, path: '../libsource' })
+  check(escapedRebaseAbort.body.ok === false, 'rebaseAbort refuses a path outside the workspace root', escapedRebaseAbort.body)
+  const escapedRebaseContinue = await call('rebaseContinue', { workspaceRoot: alpha, path: '../libsource' })
+  check(escapedRebaseContinue.body.ok === false, 'rebaseContinue refuses a path outside the workspace root', escapedRebaseContinue.body)
+
+  const noMergeBranch = await call('merge', { workspaceRoot: root, path: 'mergerepo', message: 'x' })
+  check(noMergeBranch.body.ok === false, 'merge without a branch is refused', noMergeBranch.body)
+  const noRebaseBranch = await call('rebase', { workspaceRoot: root, path: 'rebaserepo' })
+  check(noRebaseBranch.body.ok === false, 'rebase without a branch is refused', noRebaseBranch.body)
+  const optionShaped = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: '--force', message: 'x' })
+  check(optionShaped.body.ok === false, 'a ref that looks like an option is refused', optionShaped.body)
+  const optionShapedRebase = await call('rebase', { workspaceRoot: root, path: 'rebaserepo', branch: '-i' })
+  check(optionShapedRebase.body.ok === false, 'rebase refuses an option-shaped ref', optionShapedRebase.body)
+  const noMessage = await call('merge', { workspaceRoot: root, path: 'mergerepo', branch: 'feature' })
+  check(noMessage.body.ok === false, 'a merge that would commit without a message is refused', noMessage.body)
+  const missingMerge = await call('mergeAbort', { workspaceRoot: root, path: 'rebaserepo' })
+  check(missingMerge.body.ok === false, 'aborting a merge that is not in progress is refused', missingMerge.body)
+  const missingRebase = await call('rebaseAbort', { workspaceRoot: root, path: 'rebaserepo' })
+  check(missingRebase.body.ok === false, 'aborting a rebase that is not in progress is refused', missingRebase.body)
+  const missingContinue = await call('rebaseContinue', { workspaceRoot: root, path: 'rebaserepo' })
+  check(missingContinue.body.ok === false, 'continuing a rebase that is not in progress is refused', missingContinue.body)
+
   // ---- submodule ---------------------------------------------------------------
   console.log('\nsubmodule')
   const updated = await call('submodule', { workspaceRoot: root, path: 'nested/deep/beta', action: 'update' })

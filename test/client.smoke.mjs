@@ -331,6 +331,9 @@ let serverDepth = 3
 /** The whole-file diff switch the fake Host currently has stored. */
 let serverWholeFile = false
 
+/** The operation the fake Host's repository is stopped inside, if any. */
+let serverInProgress = null
+
 /** Whether the fake Host answers like a build that predates the newest operations. */
 let staleHost = false
 
@@ -363,6 +366,7 @@ function answerFor(request) {
     return {
       root: `${WORKSPACE}/app`,
       name: 'app',
+      inProgress: serverInProgress,
       branch: 'main',
       detached: false,
       upstream: 'origin/main',
@@ -650,6 +654,17 @@ check(
   localeState.ns?.dicts?.zh?.['amendBox'] === 'Amend' && localeState.ns?.dicts?.zh?.['amendCommitAll'] === 'Amend all',
   'the commit box amend control keeps its English label',
   localeState.ns?.dicts?.zh?.['amendBox'],
+)
+check(
+  localeState.ns?.dicts?.en?.['menu.merge'] === 'Merge into {name}' && localeState.ns?.dicts?.zh?.['menu.merge'] === '合并到 {name}',
+  'the branch merge menu entry is registered in both languages',
+  { en: localeState.ns?.dicts?.en?.['menu.merge'], zh: localeState.ns?.dicts?.zh?.['menu.merge'] },
+)
+check(
+  localeState.ns?.dicts?.en?.['mergeInProgress']?.startsWith('Merge in progress') === true &&
+    localeState.ns?.dicts?.zh?.['mergeInProgress']?.startsWith('合并进行中') === true,
+  'the stopped-merge banner copy is registered in both languages',
+  { en: localeState.ns?.dicts?.en?.['mergeInProgress'], zh: localeState.ns?.dicts?.zh?.['mergeInProgress'] },
 )
 check(
   localeState.ns?.dicts?.zh?.['amend'] === '修改提交信息' && localeState.ns?.dicts?.zh?.['menu.editMessage'] === '修改提交信息',
@@ -1371,6 +1386,124 @@ check(changeRow !== undefined, 'a changed path carries a context menu')
 changeRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
 view = await settle(view)
 check(view.text().includes('Show the diff'), 'the changed-path menu offers the diff', view.text().slice(-24))
+
+console.log('\nbranch merge and rebase menu')
+requests.length = 0
+view = await settle(view)
+const freshBranchRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fix/rename-docs'),
+)
+freshBranchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+const branchMenuText = view.text()
+check(branchMenuText.includes('Merge into main'), 'the branch menu offers merging into the current branch', branchMenuText.slice(-24))
+check(branchMenuText.includes('Rebase fix/rename-docs onto this'), 'the branch menu offers rebasing onto another branch', branchMenuText.slice(-30))
+const mergeMenuItem = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Merge into main')
+check(mergeMenuItem !== undefined && mergeMenuItem.props?.disabled !== true, 'a non-current branch can be merged', mergeMenuItem?.props)
+mergeMenuItem?.props?.onClick?.()
+view = await settle(view)
+const mergeDialogText = view.text().join('\n')
+check(mergeDialogText.includes('Merge fix/rename-docs into main.'), 'the merge dialog names both branches', mergeDialogText.slice(-30))
+check(collectText(view.tree).some((entry) => entry.startsWith('The working tree must be clean')), 'the merge dialog warns about the working tree', collectText(view.tree).slice(-4))
+const mergeMessageBox = find(view.tree, (element) => element.type === 'textarea' && String(element.props?.value).startsWith('Merge branch'))
+check(mergeMessageBox?.props?.value === "Merge branch 'fix/rename-docs'", 'the merge dialog pre-fills the merge message', mergeMessageBox?.props)
+const mergeConfirm = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Merge')
+mergeConfirm?.props?.onClick?.()
+await settle(view)
+const mergeRequest = requests.find((entry) => entry.op === 'merge')
+check(mergeRequest?.args?.branch === 'fix/rename-docs', 'merging sends the branch to integrate', mergeRequest?.args)
+check(mergeRequest?.args?.message === "Merge branch 'fix/rename-docs'", 'merging sends the message drawn in the dialog', mergeRequest?.args)
+check(mergeRequest?.args?.path === WORKSPACE + '/app', 'merging targets the selected repository', mergeRequest?.args)
+
+console.log('\nbranch rebase menu')
+requests.length = 0
+view = await settle(view)
+const rebaseBranchRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fix/rename-docs'),
+)
+rebaseBranchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rebase fix/rename-docs onto this')?.props?.onClick?.()
+view = await settle(view)
+// `view.text()` is the list of rendered strings, so a substring lives in the
+// joined page rather than in any single entry.
+const rebaseDialogText = view.text().join('\n')
+check(rebaseDialogText.includes('Replay main onto fix/rename-docs,'), 'the rebase dialog names the branch being replayed and its new base', rebaseDialogText.slice(-40))
+check(rebaseDialogText.includes('rewriting its commits'), 'the rebase dialog says the commits are rewritten', rebaseDialogText.slice(-30))
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rebase')?.props?.onClick?.()
+await settle(view)
+const rebaseRequest = requests.find((entry) => entry.op === 'rebase')
+check(rebaseRequest?.args?.branch === 'fix/rename-docs', 'rebasing sends the new base', rebaseRequest?.args)
+check(rebaseRequest?.args?.path === WORKSPACE + '/app', 'rebasing targets the selected repository', rebaseRequest?.args)
+
+console.log('\nin-progress merge banner')
+/**
+ * Put the panel back in step with the fake Host's stopped-operation state.
+ *
+ * The render is a pure function of the state it holds, so a changed server field
+ * reaches the tree only when the panel re-reads it. `Refresh` is the control the
+ * toolbar already offers for exactly that, and the requests it makes are dropped
+ * from the log so a later assertion sees only what the test itself triggered.
+ *
+ * @param {object} current - the render to refresh.
+ * @returns {Promise<object>} the render after the state read.
+ */
+async function withServerState(current) {
+  requests.length = 0
+  find(current.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Refresh')?.props?.onClick?.()
+  return settle(current)
+}
+
+serverInProgress = 'merge'
+requests.length = 0
+view = await withServerState(view)
+const bannerStyle = find(view.tree, (element) => element.type === 'style')
+const bannerCss = Array.isArray(bannerStyle?.children) ? bannerStyle.children.flat().join('') : ''
+check(
+  bannerCss.includes('.git-panel-banner-actions{') && bannerCss.includes('.git-panel-banner-text{'),
+  'the banner mount carries the styles its own classes need',
+  bannerCss.slice(bannerCss.indexOf('.git-panel-banner-actions'), bannerCss.indexOf('.git-panel-banner-actions') + 60),
+)
+const mergeBanner = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-banner-actions'))
+check(mergeBanner !== undefined, 'a stopped merge gets its own banner', view.text().slice(0, 12))
+check(collectText(mergeBanner).join(' ').includes('Merge in progress'), 'the merge banner explains the state', collectText(mergeBanner))
+const completeMerge = find(mergeBanner, (element) => element.type === 'button' && collectText(element).join('') === 'Complete merge')
+check(completeMerge !== undefined, 'the merge banner offers completing the merge', collectText(mergeBanner))
+const abortMerge = find(mergeBanner, (element) => element.type === 'button' && collectText(element).join('') === 'Abort merge')
+check(abortMerge !== undefined, 'the merge banner offers aborting the merge')
+requests.length = 0
+completeMerge?.props?.onClick?.()
+await settle(view)
+const completeRequest = requests.find((entry) => entry.op === 'commit')
+check(completeRequest?.args?.noEdit === true, 'completing a merge reuses the message Git saved', completeRequest?.args)
+check(completeRequest?.args?.message === undefined, 'completing a merge sends no message of its own', completeRequest?.args)
+
+serverInProgress = 'rebase'
+requests.length = 0
+view = await withServerState(view)
+const rebaseBanner = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-banner-actions'))
+check(rebaseBanner !== undefined, 'a stopped rebase gets its own banner', view.text().slice(0, 12))
+check(collectText(rebaseBanner).join(' ').includes('Rebase in progress'), 'the rebase banner explains the state', collectText(rebaseBanner))
+check(find(rebaseBanner, (element) => element.type === 'button' && collectText(element).join('') === 'Continue rebase') !== undefined, 'the rebase banner offers continuing')
+check(find(rebaseBanner, (element) => element.type === 'button' && collectText(element).join('') === 'Abort rebase') !== undefined, 'the rebase banner offers aborting')
+requests.length = 0
+find(rebaseBanner, (element) => element.type === 'button' && collectText(element).join('') === 'Abort rebase')?.props?.onClick?.()
+check(requests.some((entry) => entry.op === 'rebaseAbort'), 'the rebase banner aborts through the Host', requests.map((entry) => entry.op))
+await settle(view)
+
+serverInProgress = 'cherry-pick'
+view = await withServerState(view)
+const otherBanner = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-banner-warn'))
+check(collectText(otherBanner).join(' ').includes('cherry-pick is in progress'), 'another stopped operation is reported without merge or rebase actions', collectText(otherBanner))
+check(find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Abort merge') === undefined, 'an unrelated stopped operation offers no merge actions')
+serverInProgress = null
+view = await withServerState(view)
+check(
+  find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-banner-warn')) === undefined,
+  'a repository with nothing in progress shows no banner',
+)
 
 console.log('\ncommit box')
 const boxView = await render(GitPanel, {
