@@ -349,6 +349,23 @@ try {
   check(Number.isFinite(commits[0]?.timestamp) && commits[0].timestamp > 0, 'the timestamp is parsed', commits[0]?.timestamp)
   check(commits[0]?.files === undefined, 'the log page carries no per-commit file list', commits[0]?.files)
   check(commits[0]?.refs?.some((entry) => entry.includes('main')), 'ref decorations are parsed', commits[0]?.refs)
+  check(log.body.data?.hasMore === false, 'a page holding every commit reports nothing follows', log.body.data)
+
+  // Paging: the page size bounds one request, not the reach of the history.
+  const firstPage = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })
+  check(firstPage.body.data?.commits?.length === 1, 'a one-commit page carries one commit', firstPage.body.data)
+  check(firstPage.body.data?.hasMore === true, 'a page that is not the last reports that more follows', firstPage.body.data)
+  const secondPage = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1, skip: 1 })
+  check(secondPage.body.data?.commits?.[0]?.hash === commits[1].hash, 'skip continues where the previous page stopped', secondPage.body.data?.commits?.map((entry) => entry.subject))
+  check(secondPage.body.data?.hasMore === false, 'the last page reports nothing follows', secondPage.body.data)
+  const pastEnd = await call('log', { workspaceRoot: root, path: 'alpha', limit: 5, skip: 50 })
+  check(pastEnd.body.ok === true && (pastEnd.body.data?.commits ?? []).length === 0, 'a skip past the end answers empty rather than failing', pastEnd.body.data)
+  const negativeSkip = await call('log', { workspaceRoot: root, path: 'alpha', limit: 5, skip: -3 })
+  check((negativeSkip.body.data?.commits ?? []).length === 2, 'a negative skip reads from the newest commit', negativeSkip.body.data?.commits?.length)
+  const textSkip = await call('log', { workspaceRoot: root, path: 'alpha', limit: 5, skip: '2' })
+  check((textSkip.body.data?.commits ?? []).length === 2, 'a non-numeric skip reads from the newest commit', textSkip.body.data?.commits?.length)
+  const pagedFile = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1, skip: 1, file: 'readme.md' })
+  check(pagedFile.body.ok === true && pagedFile.body.data?.commits?.length === 1, 'a skip and a file filter combine', pagedFile.body.data)
 
   // ---- per-commit files ----------------------------------------------------------
   console.log('\ncommit files')

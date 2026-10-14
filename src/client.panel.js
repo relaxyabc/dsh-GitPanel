@@ -127,6 +127,8 @@ window.__ModuleLoader__.load({
       const [reposLoading, setReposLoading] = React.useState(false)
       const [stateLoading, setStateLoading] = React.useState(false)
       const [logLoading, setLogLoading] = React.useState(false)
+      const [logHasMore, setLogHasMore] = React.useState(false)
+      const [logLoadingMore, setLogLoadingMore] = React.useState(false)
       const [reposToken, setReposToken] = React.useState(0)
       const [stateToken, setStateToken] = React.useState(0)
       const [logToken, setLogToken] = React.useState(0)
@@ -146,6 +148,13 @@ window.__ModuleLoader__.load({
       // box is seeded through effects and refilled after a commit, and neither
       // is a render input of its own.
       const templateRef = React.useRef('')
+      // The identity of the history read in hand. Every fresh read bumps it, so
+      // a page that arrives after a refresh or a repository switch is dropped
+      // instead of being appended to a list it does not belong to.
+      const logRequestRef = React.useRef(0)
+      // A scroll fires in bursts, and the state alone would let a second page
+      // start before the re-render that disables the button.
+      const logLoadingMoreRef = React.useRef(false)
 
       /**
        * Whether a load the user should see is in flight.
@@ -284,8 +293,10 @@ window.__ModuleLoader__.load({
       // working-tree toggle never re-reads a page of commits.
       React.useEffect(() => {
         let cancelled = false
+        logRequestRef.current += 1
         if (repository === null) {
           setCommits([])
+          setLogHasMore(false)
           setLogLoading(false)
           return undefined
         }
@@ -293,7 +304,9 @@ window.__ModuleLoader__.load({
         setError(null)
         callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE })
           .then((payload) => {
-            if (!cancelled) setCommits(Array.isArray(payload.commits) ? payload.commits : [])
+            if (cancelled) return
+            setCommits(Array.isArray(payload.commits) ? payload.commits : [])
+            setLogHasMore(payload.hasMore === true)
           })
           .catch((failure) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
@@ -305,6 +318,41 @@ window.__ModuleLoader__.load({
           cancelled = true
         }
       }, [repository, workspaceRoot, logToken])
+
+      /**
+       * Read the next page of the selected repository's history.
+       *
+       * The page continues after the commits already loaded, and is dropped when
+       * a refresh or a repository switch happened meanwhile: the read generation
+       * is what keeps two histories from being concatenated into one list. Rows
+       * are de-duplicated by hash for a history that moved between the reads.
+       *
+       * @returns {Promise<void>} resolves when the read settles.
+       */
+      const loadMoreCommits = React.useCallback(() => {
+        if (repository === null || logHasMore !== true || logLoadingMoreRef.current === true) return Promise.resolve()
+        const generation = logRequestRef.current
+        const skip = commits.length
+        logLoadingMoreRef.current = true
+        setLogLoadingMore(true)
+        return callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE, skip })
+          .then((payload) => {
+            if (generation !== logRequestRef.current) return
+            const page = Array.isArray(payload.commits) ? payload.commits : []
+            setCommits((current) => {
+              const seen = new Set(current.map((entry) => entry.hash))
+              return current.concat(page.filter((entry) => seen.has(entry.hash) === false))
+            })
+            setLogHasMore(payload.hasMore === true)
+          })
+          .catch((failure) => {
+            if (generation === logRequestRef.current) setError(failure instanceof Error ? failure.message : String(failure))
+          })
+          .finally(() => {
+            logLoadingMoreRef.current = false
+            setLogLoadingMore(false)
+          })
+      }, [commits.length, logHasMore, repository, workspaceRoot])
 
       // The selected repository's commit template, read once per repository
       // alongside the history: one cheap config probe and at most one small
@@ -949,7 +997,8 @@ window.__ModuleLoader__.load({
                 // ---- middle: history ------------------------------------------
                 h(HistoryColumn, {
                   activeRange, applyQuickRange, clearHistoryFilter, commitMenu, commits, filteredCommits,
-                  historyFilter, historyFilterActive, quickRanges, selectedCommit, setHistoryFilter,
+                  historyFilter, historyFilterActive, loadMore: loadMoreCommits, loadingMore: logLoadingMore,
+                  more: logHasMore, quickRanges, selectedCommit, setHistoryFilter,
                   setMenu, setSelectedCommit, setSelectedFile, t,
                 }),
                 // ---- right: the commit message above, its files below ---------

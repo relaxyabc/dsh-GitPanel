@@ -52,6 +52,7 @@ window.__ModuleLoader__.load({
       '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
       '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
+      '.git-panel-list-more{display:flex;align-items:center;justify-content:center;padding:6px 0 2px}',
       '.git-panel-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
       // The history filter row sits between the pane head and the list and
       // wraps on a narrow column: search on its own line, author and the two
@@ -83,10 +84,25 @@ window.__ModuleLoader__.load({
       '.git-panel-numstat{flex:none;display:flex;gap:4px;font-family:ui-monospace,monospace;font-size:10px}',
       '.git-panel-plus{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
       '.git-panel-minus{color:var(--dsw-alias-state-error-primary,#cf222e)}',
-      '.git-panel-commit{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}',
-      '.git-panel-commit-top{display:flex;align-items:center;gap:6px;min-width:0}',
+      // A history row lays the author and the date left of the lane graph and
+      // lets the message take the rest; every column clips instead of wrapping
+      // so a row stays one line tall and the lanes line up across rows.
+      '.git-panel-row-author{flex:none;width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600}',
+      '.git-panel-row-date{flex:none;width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-row-msg{flex:1;min-width:0;display:flex;align-items:center;gap:5px}',
+      '.git-panel-row-msg .git-panel-subject{flex:1;min-width:0}',
       '.git-panel-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.git-panel-meta{display:flex;gap:7px;overflow:hidden;color:var(--dsw-alias-label-secondary,#57606a);font-size:11px;white-space:nowrap}',
+      // The lane graph is one SVG per row, stretched to the row height so its
+      // lanes run seamlessly into the next row, and colored per lane through
+      // currentColor so the palette rules stay token-only.
+      '.git-panel-graph{flex:none;align-self:stretch;display:flex}',
+      '.git-panel-graph svg{height:100%;overflow:visible}',
+      '.git-panel-graph-line,.git-panel-graph-curve{fill:none;stroke:currentColor;stroke-width:1.5}',
+      '.git-panel-graph-dot{fill:currentColor}',
+      '.git-panel-graph-l0{color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-graph-l1{color:var(--dsw-alias-state-success-primary,#1a7f37)}',
+      '.git-panel-graph-l2{color:var(--dsw-alias-state-warn-primary,#9a6700)}',
+      '.git-panel-graph-l3{color:var(--dsw-alias-label-tertiary,#8b949e)}',
       '.git-panel-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}',
       '.git-panel-detail{flex:1 1 46%;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-detail-head{flex:none;padding:9px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',

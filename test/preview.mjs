@@ -63,6 +63,10 @@ writeFileSync(join(app, 'src', 'index.ts'), "export const main = () => 'hello wo
 git(app, ['add', '-A'])
 git(app, ['commit', '-m', 'feat: greet the world and expose a version'])
 git(app, ['checkout', '-b', 'fix/rename-docs'])
+mkdirSync(join(app, 'docs'), { recursive: true })
+writeFileSync(join(app, 'docs', 'rename.md'), '# Rename\n')
+git(app, ['add', '-A'])
+git(app, ['commit', '-m', 'docs: draft the rename note on its branch'])
 git(app, ['checkout', 'main'])
 git(app, ['branch', 'chore/bump-deps'])
 git(app, ['branch', 'feature/git-panel'])
@@ -75,6 +79,9 @@ git(lib, ['add', '-A'])
 git(lib, ['commit', '-m', 'feat: add the answer'])
 git(app, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '../libsource', 'vendor/lib'])
 git(app, ['commit', '-m', 'build: vendor the shared library as a submodule'])
+// A real merge gives the history a commit with two parents, so the lane graph
+// shows a curve and not only a straight rail.
+git(app, ['-c', 'protocol.file.allow=always', 'merge', '--no-ff', 'fix/rename-docs', '-m', "Merge branch 'fix/rename-docs'"])
 
 const bare = join(workspace, 'origin.git')
 mkdirSync(bare, { recursive: true })
@@ -470,6 +477,9 @@ while (stack.length > 0) {
   for (const child of node.children ?? []) stack.push(child)
 }
 
+/** The SVG attributes the serializer passes through for glyphs and graph cells. */
+const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x1', 'x2', 'y1', 'y2', 'cx', 'cy', 'r', 'd', 'vectorEffect'])
+
 /**
  * Serialize an element tree to HTML.
  * @param {object} node - element.
@@ -490,6 +500,10 @@ function toHtml(node) {
       if (value === true) attributes.push(key.toLowerCase())
     } else if (['value', 'placeholder', 'title', 'type', 'aria-label', 'aria-expanded', 'aria-hidden'].includes(key)) {
       attributes.push(`${key}="${String(value).replace(/"/g, '&quot;')}"`)
+    } else if (SVG_ATTRIBUTES.has(key)) {
+      // The graph cells and glyphs are SVG: without their geometry the preview
+      // would render the lanes and dots as empty elements.
+      attributes.push(`${key === 'vectorEffect' ? 'vector-effect' : key}="${String(value).replace(/"/g, '&quot;')}"`)
     }
   }
   const body = toHtml(node.children)
@@ -512,6 +526,7 @@ const PALETTES = {
     '--dsw-alias-brand-primary': '#4d6bfe',
     '--dsw-alias-label-primary': '#1f2328',
     '--dsw-alias-label-secondary': '#6b7280',
+    '--dsw-alias-label-tertiary': '#697380',
     '--dsw-alias-state-error-primary': '#d1242f',
     '--dsw-alias-state-success-primary': '#1a7f37',
     '--dsw-alias-state-warn-primary': '#9a6700',
@@ -526,6 +541,7 @@ const PALETTES = {
     '--dsw-alias-brand-primary': '#6c86ff',
     '--dsw-alias-label-primary': '#e8eaed',
     '--dsw-alias-label-secondary': '#9aa0a6',
+    '--dsw-alias-label-tertiary': '#8b949e',
     '--dsw-alias-state-error-primary': '#f07178',
     '--dsw-alias-state-success-primary': '#4ec26a',
     '--dsw-alias-state-warn-primary': '#d5a021',

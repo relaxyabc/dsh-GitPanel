@@ -38,6 +38,12 @@ const GIT_TIMEOUT_MS = 60_000
 /** Cap on captured stdout/stderr of one `git` invocation, in bytes. */
 const GIT_MAX_BUFFER = 32 * 1024 * 1024
 
+/** Largest commit history page one `log` request returns. */
+const MAX_LOG_PAGE = 200
+
+/** Commit history page size when the caller names none. */
+const DEFAULT_LOG_PAGE = 30
+
 /**
  * Context lines requested when the whole-file diff view is on.
  *
@@ -782,21 +788,32 @@ async function readInProgress(repositoryPath) {
  * history the user has not looked at. `readCommit` answers that per commit, on
  * selection.
  *
+ * The history is read in pages, never in full: every commit carries its whole
+ * message, so one unbounded read of a large repository answers in tens of
+ * megabytes — past the capture cap and through a single JSON response. The
+ * caller continues with `args.skip`, and the answer says whether another page
+ * exists.
+ *
  * `args.path` is the repository to read (resolved by the caller); `args.file`
  * optionally narrows the history to one path inside it.
  *
  * @param {string} repositoryPath - absolute repository path.
  * @param {object} args - request arguments.
- * @returns {Promise<object>} the commit page.
+ * @returns {Promise<{commits: Array<object>, hasMore: boolean}>} the commit page and whether it ends the history.
  */
 async function readLog(repositoryPath, args) {
-  const limit = Number.isInteger(args.limit) ? Math.min(Math.max(args.limit, 1), 200) : 30
+  const limit = Number.isInteger(args.limit) ? Math.min(Math.max(args.limit, 1), MAX_LOG_PAGE) : DEFAULT_LOG_PAGE
+  const skip = Number.isInteger(args.skip) ? Math.max(args.skip, 0) : 0
   const format = `${RS}%H${US}%an${US}%ae${US}%at${US}%P${US}%D${US}%s${US}%b${US}%B`
-  const argv = ['log', `-n${limit}`, '--no-color', `--format=${format}`]
+  // One commit past the page answers "is there another page" without a second
+  // call; the response itself still carries at most `limit` commits.
+  const argv = ['log', `-n${limit + 1}`, '--no-color', `--format=${format}`]
+  if (skip > 0) argv.push(`--skip=${skip}`)
   if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
   if (typeof args.file === 'string' && args.file !== '') argv.push('--', args.file)
   const raw = await gitOrThrow(repositoryPath, argv)
-  return { commits: parseLog(raw) }
+  const commits = parseLog(raw)
+  return { commits: commits.slice(0, limit), hasMore: commits.length > limit }
 }
 
 /**

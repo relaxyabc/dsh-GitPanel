@@ -31,13 +31,27 @@ window.__ModuleLoader__.load({
     const ROUTE = '/api/local-git'
 
     // The package revision that every chunk URL carries is derived from THIS
-    // file (its mtime, ctime, and size), not from the chunks themselves. Editing
-    // only a `client.*.js` chunk therefore leaves every URL unchanged and the
-    // browser keeps serving the previous chunk out of its immutable cache until
-    // the user hard-refreshes; editing the entry is what retires that cache.
+    // file (its mtime, ctime, and size), not from the chunks themselves, and the
+    // Host's chunk route serves that revision as `immutable`. Editing only a
+    // `client.*.js` chunk therefore leaves every URL unchanged, the browser
+    // keeps serving the cached chunk, and the HMR watcher — which polls this one
+    // file — never sees the change either. The page then runs a mix of new and
+    // cached pieces, and a cached chunk that reads a shared name this file no
+    // longer defines throws on its first render: the white panel. Touching this
+    // file changes the revision, retires every cached chunk, and makes HMR
+    // reload the page; keeping shared names stable — add, never rename or
+    // remove — degrades an unavoidably cached chunk to a no-op instead.
 
     /** Commit page size requested from the Host. */
     const COMMIT_PAGE = 200
+
+    /**
+     * Distance from the end of the history list that reads the next page.
+     *
+     * A scroll fires in bursts and the list re-renders late, so the margin is
+     * what keeps scrolling to the end from looking like a dead stop.
+     */
+    const HISTORY_LOAD_AHEAD_PX = 240
 
     /** Most side-by-side diff rows one modal renders before it truncates. */
     const MAX_DIFF_ROWS = 3000
@@ -279,20 +293,29 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Format a UNIX timestamp in seconds as a short relative age.
+     * Format a commit timestamp the way a history row reads it: today and
+     * yesterday carry their name plus the clock time, everything older falls
+     * back to the absolute local date.
      *
      * @param {number} seconds - commit timestamp.
-     * @returns {string} the age.
+     * @param {(key: string) => string} t - the translator for the day names.
+     * @returns {string} the formatted date, or an empty string.
      */
-    function relativeAge(seconds) {
+    function relativeDate(seconds, t) {
       if (!Number.isFinite(seconds) || seconds <= 0) return ''
-      const delta = Math.max(0, Math.floor(Date.now() / 1000) - seconds)
-      if (delta < 60) return `${delta}s`
-      if (delta < 3600) return `${Math.floor(delta / 60)}m`
-      if (delta < 86400) return `${Math.floor(delta / 3600)}h`
-      if (delta < 2592000) return `${Math.floor(delta / 86400)}d`
-      if (delta < 31536000) return `${Math.floor(delta / 2592000)}mo`
-      return `${Math.floor(delta / 31536000)}y`
+      const date = new Date(seconds * 1000)
+      const now = new Date()
+      // A plain ymd number compares without the timezone traps a date string
+      // would carry; yesterday is built through the Date constructor so it
+      // stays correct across month and year boundaries.
+      const dayOf = (value) => value.getFullYear() * 10000 + (value.getMonth() + 1) * 100 + value.getDate()
+      const day = dayOf(date)
+      const today = dayOf(now)
+      if (day !== today && day !== dayOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) {
+        return absoluteDate(seconds)
+      }
+      const pad = (value) => String(value).padStart(2, '0')
+      return `${t(day === today ? 'date.today' : 'date.yesterday')} ${pad(date.getHours())}:${pad(date.getMinutes())}`
     }
 
     /**
@@ -433,7 +456,7 @@ window.__ModuleLoader__.load({
         basename,
         fill,
         statusText,
-        relativeAge,
+        relativeDate,
         absoluteDate,
         commitMessageParts,
         submoduleStateText,
@@ -457,6 +480,7 @@ window.__ModuleLoader__.load({
         // Limits and identities.
         MAX_DIFF_ROWS,
         COMMIT_PAGE,
+        HISTORY_LOAD_AHEAD_PX,
         NO_FILES,
         PANEL_ID,
         RESOURCE_PREFIX,

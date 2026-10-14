@@ -337,6 +337,9 @@ let serverTemplate = ''
 /** The operation the fake Host's repository is stopped inside, if any. */
 let serverInProgress = null
 
+/** Whether the fake Host reports that older commits remain unread. */
+let serverLogHasMore = false
+
 /** Whether the fake Host answers like a build that predates the newest operations. */
 let staleHost = false
 
@@ -391,6 +394,18 @@ function answerFor(request) {
     }
   }
   if (request.op === 'log') {
+    // A continuation answers with the older commit the skip asked to continue
+    // from; the first page reports whether such a page exists at all.
+    if (Number.isInteger(request.args?.skip) && request.args.skip > 0) {
+      return {
+        commits: [
+          // The timestamp is yesterday on purpose: the history row names such
+          // a day instead of spelling the full date.
+          { hash: 'c'.repeat(40), short: 'cccccccc', author: 'Cleo', email: 'cleo@example.com', timestamp: Math.floor(Date.now() / 1000) - 86400, parents: ['b'.repeat(40)], refs: [], subject: 'docs: older note', body: '', message: 'docs: older note' },
+        ],
+        hasMore: false,
+      }
+    }
     return {
       commits: [
         {
@@ -399,7 +414,9 @@ function answerFor(request) {
           author: 'Ada Lovelace',
           email: 'ada@example.com',
           timestamp: 1700000000,
-          parents: ['b'.repeat(40)],
+          // A second parent the page does not carry: the row draws a merge
+          // stub for it, the way any truncated history page looks.
+          parents: ['b'.repeat(40), 'e'.repeat(40)],
           refs: ['HEAD -> main'],
           subject: 'feat: greet the world',
           body: 'A longer explanation\nof the change.',
@@ -417,6 +434,7 @@ function answerFor(request) {
         // the break.
         { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '', message: 'chore: scaffold\nfollowed by a note' },
       ],
+      hasMore: serverLogHasMore,
     }
   }
   if (request.op === 'commitFiles') {
@@ -1416,7 +1434,9 @@ const details = view.text()
 check(details.includes('Ada Lovelace'), 'the selected commit author renders', details.slice(-20))
 check(details.some((entry) => entry.includes('ada@example.com')), 'the selected commit e-mail renders', details.slice(-16))
 check(details.some((entry) => entry.includes('2023-11-1')), 'the selected commit date renders', details.slice(-20))
-check(details.includes('aaaaaaaa'), 'the selected commit hash renders')
+  // The row carries the hash in its tooltip now, so the pane's full hash is
+  // what this assertion reads.
+  check(details.includes('a'.repeat(40)), 'the selected commit hash renders')
 check(details.some((entry) => entry.includes('A longer explanation')), 'the commit body renders', details.slice(-14))
 check(
   requests.some((entry) => entry.op === 'commitFiles' && entry.args?.commit === 'a'.repeat(40)),
@@ -1632,6 +1652,111 @@ check(
   find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-banner-warn')) === undefined,
   'a repository with nothing in progress shows no banner',
 )
+
+console.log('\nhistory paging')
+serverLogHasMore = true
+view = await withServerState(view)
+let pagedText = view.text()
+check(pagedText.includes('2+'), 'a page that is not the last is counted with a trailing plus', pagedText.filter((entry) => entry.includes('+')))
+const historyList = find(
+  view.tree,
+  (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function',
+)
+check(historyList !== undefined, 'the history list is a scroll target for the next page')
+const pagingStyle = find(view.tree, (element) => element.type === 'style')
+const pagingCss = Array.isArray(pagingStyle?.children) ? pagingStyle.children.flat().join('') : ''
+check(
+  pagingCss.includes('.git-panel-list-more{'),
+  'the paging row carries the styles its own class needs',
+  pagingCss.slice(pagingCss.indexOf('.git-panel-list-more'), pagingCss.indexOf('.git-panel-list-more') + 40),
+)
+
+// The scroll path: reaching the end of the loaded page reads the next one.
+requests.length = 0
+historyList?.props?.onScroll?.({ currentTarget: { scrollHeight: 100, scrollTop: 90, clientHeight: 20 } })
+view = await settle(view)
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.skip === 2),
+  'scrolling to the end reads the page after the commits already loaded',
+  requests.map((entry) => entry.args),
+)
+pagedText = view.text()
+check(pagedText.includes('docs: older note'), 'the next page appends its commits', pagedText.slice(-8))
+check(pagedText.includes('feat: greet the world') && pagedText.includes('chore: scaffold'), 'appending a page keeps the commits already loaded', pagedText.slice(-10))
+check(!pagedText.includes('Load more'), 'a list that reached the end of the history offers no further page')
+
+// The button path: the same read for a list too short to scroll.
+serverLogHasMore = true
+view = await withServerState(view)
+const loadMoreButton = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Load more')
+check(loadMoreButton !== undefined, 'the history offers reading the next page', view.text().slice(-8))
+requests.length = 0
+loadMoreButton?.props?.onClick?.()
+view = await settle(view)
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.skip === 2),
+  'the button reads the page after the commits already loaded',
+  requests.map((entry) => entry.args),
+)
+serverLogHasMore = false
+view = await withServerState(view)
+check(!view.text().includes('Load more'), 'a last page offers no further page')
+
+console.log('\nhistory graph')
+// Load the continuation page so the graph covers the whole fixture: A merges
+// into B and a parent the page does not carry, B ends its lane, C continues it.
+serverLogHasMore = true
+view = await withServerState(view)
+find(
+  view.tree,
+  (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function',
+)?.props?.onScroll?.({ currentTarget: { scrollHeight: 100, scrollTop: 90, clientHeight: 20 } })
+view = await settle(view)
+check(view.text().includes('docs: older note'), 'the graph section reads the whole paged fixture', view.text().slice(-8))
+const graphCells = findAll(view.tree, (element) => element.type === 'svg' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-graph'))
+check(graphCells.length === 3, 'every commit row draws its slice of the graph', graphCells.length)
+/**
+ * The graph cell of the commit whose subject matches.
+ * @param {string} text - the subject text to look for.
+ * @returns {object|undefined} the svg element.
+ */
+const graphOf = (text) => {
+  const row = find(view.tree, (element) => typeof element.props?.onClick === 'function' && collectText(element).includes(text))
+  return row === undefined ? undefined : find(row, (element) => element.type === 'svg')
+}
+const mergeGraph = graphOf('feat: greet the world')
+const linearGraph = graphOf('chore: scaffold')
+const olderGraph = graphOf('docs: older note')
+check(mergeGraph !== undefined && linearGraph !== undefined && olderGraph !== undefined, 'the graph cell sits inside its commit row')
+check(
+  mergeGraph?.props?.width === linearGraph?.props?.width && linearGraph?.props?.width === olderGraph?.props?.width,
+  'every graph cell shares one lane width',
+  [mergeGraph?.props?.width, linearGraph?.props?.width, olderGraph?.props?.width],
+)
+check(findAll(mergeGraph, (element) => element.type === 'path').length === 1, 'the parent outside the page draws a merge stub', findAll(mergeGraph, (element) => element.type === 'path').map((element) => element.props?.d))
+const stubPath = findAll(mergeGraph, (element) => element.type === 'path')[0]
+check(stubPath?.props?.d === 'M 4 12 C 4 18, 15 18, 15 24', 'the stub curve leaves the commit lane and opens the next one', stubPath?.props?.d)
+check(findAll(linearGraph, (element) => element.type === 'path').length === 0 && findAll(olderGraph, (element) => element.type === 'path').length === 0, 'a linear stretch of history draws no curves')
+check(findAll(linearGraph, (element) => element.type === 'line').some((line) => line.props?.y1 === 0 && line.props?.y2 === 12), 'a commit receives its lane from above')
+check(findAll(olderGraph, (element) => element.type === 'line').some((line) => line.props?.y1 === 12 && line.props?.y2 === 24), 'a commit passes its lane on to its parent')
+check(findAll(mergeGraph, (element) => element.type === 'circle').length === 1, 'each row marks its commit with one dot')
+check(view.text().some((entry) => entry.startsWith('Yesterday ')), 'a commit from yesterday reads as a relative date', view.text().filter((entry) => entry.includes('2023-11')).slice(0, 2))
+check(view.text().some((entry) => entry.startsWith('2023-11-')), 'an older commit keeps its full date', view.text().slice(0, 4))
+check(view.text().includes('Ada Lovelace') && view.text().includes('Cleo'), 'the author sits in its own column')
+const graphStyle = find(view.tree, (element) => element.type === 'style')
+const graphCss = Array.isArray(graphStyle?.children) ? graphStyle.children.flat().join('') : ''
+check(
+  graphCss.includes('.git-panel-row-author{') && graphCss.includes('.git-panel-row-date{') && graphCss.includes('.git-panel-graph{'),
+  'the graph row carries the stylesheet its own classes need',
+  graphCss.slice(graphCss.indexOf('.git-panel-row-author'), graphCss.indexOf('.git-panel-row-author') + 80),
+)
+check(
+  graphCss.includes('.git-panel-graph-dot{') && graphCss.includes('.git-panel-graph-l0{') && graphCss.includes('.git-panel-graph-l3{'),
+  'the lanes and dots carry their palette rules',
+  graphCss.slice(graphCss.indexOf('.git-panel-graph-l0'), graphCss.indexOf('.git-panel-graph-l0') + 60),
+)
+serverLogHasMore = false
+view = await withServerState(view)
 
 console.log('\ncommit box')
 const boxView = await render(GitPanel, {

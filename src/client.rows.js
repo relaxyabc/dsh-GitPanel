@@ -12,7 +12,107 @@ window.__ModuleLoader__.load({
   id: 'GitPanel',
   chunk: 'client.rows.js',
   factory: () => ({ create: (shared) => {
-    const { h, React, boundTranslate, cx, basename, statusText, relativeAge, commitMessageParts, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
+    const { h, React, boundTranslate, cx, basename, statusText, relativeDate, commitMessageParts, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
+
+    /** Horizontal distance between two graph lanes, in pixels. */
+    const GRAPH_GAP = 11
+    /** Padding left and right of the lanes inside one graph cell, in pixels. */
+    const GRAPH_PAD = 4
+    /** The commit dot's radius, in pixels. */
+    const GRAPH_DOT = 3
+    /** The graph's viewBox height; every row stretches the cell to its own height. */
+    const GRAPH_HEIGHT = 24
+
+    /**
+     * The x coordinate of a graph lane inside one cell.
+     *
+     * @param {number} lane - the lane index.
+     * @returns {number} the x position.
+     */
+    function graphLaneX(lane) {
+      return GRAPH_PAD + lane * GRAPH_GAP
+    }
+
+    /**
+     * The color class of a graph element: lanes cycle through four palettes so
+     * crossing branches stay tellable apart.
+     *
+     * @param {number} lane - the lane index.
+     * @returns {string} the class name.
+     */
+    function graphLaneClass(lane) {
+      return `git-panel-graph-l${((lane % 4) + 4) % 4}`
+    }
+
+    /**
+     * One row's slice of the commit graph: the lanes that pass through, the
+     * commit's dot, and the merge curves into its parents. A single SVG that
+     * the row stretches to its own height, so the lanes run seamlessly from
+     * one row into the next.
+     *
+     * @param {object} props - graph inputs.
+     * @param {object|null} [props.graph] - the row's draw data from `commitGraphRows`.
+     * @param {number} [props.columns] - the lane count every row shares.
+     * @returns {object|null} the SVG element, or null without draw data.
+     */
+    function CommitGraph({ graph, columns }) {
+      if (graph === null || typeof graph?.lane !== 'number') return null
+      const width = GRAPH_PAD * 2 + Math.max(1, columns ?? 1) * GRAPH_GAP
+      return h(
+        'svg',
+        {
+          className: 'git-panel-graph',
+          width,
+          height: GRAPH_HEIGHT,
+          viewBox: `0 0 ${width} ${GRAPH_HEIGHT}`,
+          preserveAspectRatio: 'none',
+          'aria-hidden': true,
+        },
+        graph.fulls.map((lane) =>
+          h('line', {
+            key: `f${lane}`,
+            x1: graphLaneX(lane),
+            x2: graphLaneX(lane),
+            y1: 0,
+            y2: GRAPH_HEIGHT,
+            vectorEffect: 'non-scaling-stroke',
+            className: cx('git-panel-graph-line', graphLaneClass(lane)),
+          }),
+        ),
+        graph.incoming === true
+          ? h('line', {
+              x1: graphLaneX(graph.lane),
+              x2: graphLaneX(graph.lane),
+              y1: 0,
+              y2: GRAPH_HEIGHT / 2,
+              vectorEffect: 'non-scaling-stroke',
+              className: cx('git-panel-graph-line', graphLaneClass(graph.lane)),
+            })
+          : null,
+        graph.below.map((lane) =>
+          h('line', {
+            key: `b${lane}`,
+            x1: graphLaneX(lane),
+            x2: graphLaneX(lane),
+            y1: GRAPH_HEIGHT / 2,
+            y2: GRAPH_HEIGHT,
+            vectorEffect: 'non-scaling-stroke',
+            className: cx('git-panel-graph-line', graphLaneClass(lane)),
+          }),
+        ),
+        graph.curves.map((curve, index) => {
+          const x1 = graphLaneX(curve.from)
+          const x2 = graphLaneX(curve.to)
+          return h('path', {
+            key: `c${index}`,
+            d: `M ${x1} ${GRAPH_HEIGHT / 2} C ${x1} ${GRAPH_HEIGHT / 2 + 6}, ${x2} ${GRAPH_HEIGHT / 2 + 6}, ${x2} ${GRAPH_HEIGHT}`,
+            vectorEffect: 'non-scaling-stroke',
+            className: cx('git-panel-graph-curve', graphLaneClass(curve.to)),
+          })
+        }),
+        h('circle', { cx: graphLaneX(graph.lane), cy: GRAPH_HEIGHT / 2, r: GRAPH_DOT, className: cx('git-panel-graph-dot', graphLaneClass(graph.lane)) }),
+      )
+    }
 
     /**
      * One pointer context menu.
@@ -175,12 +275,21 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * One commit row.
+     * One commit row: author and date on the left, then the lane graph, then
+     * the message with the branch or tag chip — the row's full hash lives in
+     * its tooltip, the detail column carries it in full.
      *
      * @param {object} props - row inputs.
+     * @param {object} props.commit - the commit record.
+     * @param {object|null} [props.graph] - the row's graph draw data.
+     * @param {number} [props.columns] - the graph's lane count.
+     * @param {boolean} props.selected - whether this is the selected commit.
+     * @param {Function} props.onSelect - called with the commit on click.
+     * @param {Function} props.onContextMenu - called with the event and the commit.
+     * @param {Function} [props.t] - the translator.
      * @returns {object} the row element.
      */
-    function CommitRow({ commit, selected, onSelect, onContextMenu, t = boundTranslate }) {
+    function CommitRow({ commit, graph, columns, selected, onSelect, onContextMenu, t = boundTranslate }) {
       // The raw message's first line, not Git's folded subject: a subject
       // paragraph that ran over several lines stays one line here too.
       const { subject } = commitMessageParts(commit)
@@ -188,6 +297,7 @@ window.__ModuleLoader__.load({
         'div',
         {
           className: cx('git-panel-row', selected ? 'git-panel-row-sel' : false),
+          title: `${commit.short} — ${subject || t('noMessage')}`,
           onClick: () => onSelect(commit),
           onContextMenu: (event) => {
             event.preventDefault()
@@ -195,19 +305,15 @@ window.__ModuleLoader__.load({
             onContextMenu(event, commit)
           },
         },
-        h('span', { className: cx('git-panel-status', 'git-panel-mono'), style: { width: 'auto', opacity: 0.7, fontSize: 10.5 } }, commit.short),
+        h('span', { className: 'git-panel-row-author' }, commit.author || 'unknown'),
+        h('span', { className: 'git-panel-row-date' }, relativeDate(commit.timestamp, t)),
+        h(CommitGraph, { graph, columns }),
         h(
-          'div',
-          { className: 'git-panel-commit' },
-          h('div', { className: 'git-panel-commit-top' }, h('span', { className: 'git-panel-subject' }, subject || t('noMessage'))),
-          h(
-            'div',
-            { className: 'git-panel-meta' },
-            h('span', null, commit.author || 'unknown'),
-            h('span', null, relativeAge(commit.timestamp) === '' ? '' : `${relativeAge(commit.timestamp)} ago`),
-          ),
+          'span',
+          { className: 'git-panel-row-msg' },
+          h('span', { className: 'git-panel-subject' }, subject || t('noMessage')),
+          commit.refs.length === 0 ? null : h('span', { className: 'git-panel-chip' }, commit.refs[0].replace('HEAD -> ', '').replace('tag: ', '')),
         ),
-        commit.refs.length === 0 ? null : h('span', { className: 'git-panel-chip' }, commit.refs[0].replace('HEAD -> ', '').replace('tag: ', '')),
       )
     }
 

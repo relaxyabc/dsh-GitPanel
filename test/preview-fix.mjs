@@ -251,8 +251,13 @@ const record = (condition, label) => lines.push((condition ? 'ok ' : 'FAIL ') + 
 const fail = (label) => { lines.push('FAIL ' + label); };
 const report = () => { document.getElementById('out').textContent = 'DSH-PROBE-BEGIN\\n' + lines.join('\\n') + '\\nVERDICT ' + (lines.some((line) => line.startsWith('FAIL')) ? 'fail' : 'pass') + '\\nDSH-PROBE-END'; };
 try {
-  // Chromium's own answer for the address the preview uses: no host at all.
-  record(new URL('dsh-resource://file/x').hostname === '', 'chromium reports no host for a dsh-resource address');
+  // Chromium's own answer for the address the preview uses. The defect is a
+  // deviation from the specification, so a browser that already reports the host
+  // (later Chromium builds do) has nothing to repair: the claim is a skip there,
+  // not a failure, exactly like a machine with no Chromium at all.
+  const nativeHost = new URL('dsh-resource://file/x').hostname;
+  if (nativeHost === '') record(true, 'chromium reports no host for a dsh-resource address');
+  else lines.push('skip chromium already reports the resource host (' + nativeHost + ')');
   record(new URL('dsh-resource://file/x').protocol === 'dsh-resource:', 'chromium still reports the scheme');
   record(new URL('https://example.com/x').hostname === 'example.com', 'chromium parses an ordinary address normally');
 
@@ -347,7 +352,7 @@ try {
         record(threw, 'an address chromium rejects still throws');
         settingsDocument.value = { filePreviewFix: false };
         for (const listener of window.__PROBE_LISTENERS__) listener();
-        record(new URL('dsh-resource://file/x').hostname === '', 'turning the setting off restores chromium parsing');
+        record(new URL('dsh-resource://file/x').hostname === nativeHost, 'turning the setting off restores chromium parsing');
         settingsDocument.value = { filePreviewFix: true };
         for (const listener of window.__PROBE_LISTENERS__) listener();
         record(new URL('dsh-resource://file/x').hostname === 'file', 'turning the setting on repairs it again');
@@ -389,6 +394,12 @@ if (chromium === undefined) {
     } else {
       const reported = block[1].split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('VERDICT'))
       for (const line of reported) {
+        // A skip is the browser's own verdict that the defect is not there to
+        // reproduce; it says nothing about the repair, so it is not a check.
+        if (line.startsWith('skip ')) {
+          console.log(`  skip ${line.slice(5).replace(/^chromium: /, '')}`)
+          continue
+        }
         const ok = line.startsWith('ok ')
         check(ok, `chromium: ${line.replace(/^(ok|FAIL) /, '')}`, line)
       }
