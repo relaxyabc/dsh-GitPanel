@@ -8,8 +8,9 @@
  * inherits the same Host/Origin fence and browser-session authentication as the
  * shipped API bridge; it is never a bare unauthenticated webserver route.
  *
- * Reads are `repos`, `state`, `log`, `commitFiles`, `commitTemplate`, and
- * `diff`; writes are `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`,
+ * Reads are `repos`, `state`, `log`, `logCount`, `commitFiles`,
+ * `commitMessage`, `commitTemplate`, and `diff`; writes are `stage`,
+ * `unstage`, `commit`, `push`, `fetch`, `pull`,
  * `checkout`, `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`,
  * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`, and
  * `submodule`.
@@ -168,6 +169,18 @@ const CONFLICT_STATUS_LETTERS = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU
 
 /** Field separator separating two fields of one record. */
 const US = '\u001f'
+
+/**
+ * The `git log --format` every history read shares.
+ *
+ * Records are separated by RS and fields by US, so the multi-line fields need no
+ * line-oriented parsing at all. The message travels as `%s` plus `%b` and never
+ * as `%B`: the raw message repeats what those two already carry, and every page
+ * of history would then weigh twice as much. `%ct` joins `%at` because Git's
+ * date filters (`--since`/`--until`) limit on the commit date, so the panel needs
+ * that value to filter locally the same way the query does.
+ */
+const LOG_FORMAT = `${RS}%H${US}%an${US}%ae${US}%at${US}%ct${US}%P${US}%D${US}%s${US}%b`
 
 /**
  * The markers Git leaves behind while an operation is stopped for the user.
@@ -517,11 +530,15 @@ function statusLetter(xy) {
  * Parse one `git log --format` payload into structured commits.
  *
  * Records are separated by the format's own record separator and their fields
- * by the unit separator, so the multi-line fields — the body and the raw
- * message, the only ones that may contain newlines — need no line-oriented
- * parsing at all. The raw message rides last because Git folds a subject
- * paragraph's own line breaks into spaces for `%s`; only `%B` keeps every
- * newline, and it is what the panel shows and amends from.
+ * by the unit separator, so the multi-line fields — the body is the only one
+ * left that may contain newlines — need no line-oriented parsing at all. The
+ * raw message is deliberately not carried: `%B` repeats the subject and body
+ * that are already here, and the panel reads one commit's raw message with
+ * `commitMessage` when it shows or amends that commit.
+ *
+ * `committedAt` is the commit date, which is what Git's `--since`/`--until`
+ * limit on and therefore what the panel displays and filters; `timestamp` keeps
+ * the author date for the surfaces that want it.
  *
  * @param {string} raw - the formatted log output.
  * @returns {Array<object>} commits, newest first.
@@ -539,17 +556,17 @@ function parseLog(raw) {
       author: fields[1] ?? '',
       email: fields[2] ?? '',
       timestamp: Number(fields[3] ?? 0),
-      parents: (fields[4] ?? '').split(' ').filter((entry) => entry !== ''),
-      refs: (fields[5] ?? '')
+      committedAt: Number(fields[4] ?? 0),
+      parents: (fields[5] ?? '').split(' ').filter((entry) => entry !== ''),
+      refs: (fields[6] ?? '')
         .split(', ')
         .map((entry) => entry.trim())
         .filter((entry) => entry !== ''),
-      subject: fields[6] ?? '',
-      // The body is sliced from both ends rather than read at a fixed index:
-      // a unit separator inside it splits the record into extra fields, and
-      // the far end stays the raw message's.
-      body: fields.slice(7, -1).join(US).trim(),
-      message: (fields[fields.length - 1] ?? '').trim(),
+      subject: fields[7] ?? '',
+      // The body is read from its own end rather than at a fixed index: a unit
+      // separator inside it splits the record into extra fields, and the body is
+      // whatever remains after the subject.
+      body: fields.slice(8).join(US).trim(),
     })
   }
   return commits
@@ -781,6 +798,52 @@ async function readInProgress(repositoryPath) {
 }
 
 /**
+ * The revision limiters one history read shares with its count.
+ *
+ * `log` and `logCount` must agree on what a filtered history is: the page reads
+ * it and the count measures it, so the same request has to become the same
+ * limiters — otherwise the count would describe a different set than the list
+ * beside it. Every value travels as exactly one argv element, and an empty
+ * condition adds no argument at all.
+ *
+ * `--author` and `--grep` are matched as fixed strings, case-insensitively: the
+ * filter box has always been a substring search, and Git's defaults (regular
+ * expressions, case-sensitive) would silently change what a user sees.
+ *
+ * @param {object} args - request arguments.
+ * @returns {string[]} the limiter argv, empty when nothing is filtered.
+ */
+function logFilterArgs(args) {
+  const argv = []
+  if (typeof args.since === 'string' && args.since !== '') argv.push(`--since=${args.since}`)
+  if (typeof args.until === 'string' && args.until !== '') argv.push(`--until=${args.until}`)
+  if (typeof args.author === 'string' && args.author !== '') argv.push(`--author=${args.author}`)
+  if (typeof args.search === 'string' && args.search !== '') argv.push(`--grep=${args.search}`)
+  if (argv.length > 0) argv.push('--fixed-strings', '--regexp-ignore-case')
+  return argv
+}
+
+/**
+ * Read the one commit a hash-shaped search names.
+ *
+ * The history search looks at commit messages, so a pasted hash would match
+ * nothing; a caller that sends `args.ref` asks for that single commit instead.
+ * An address that names no commit is an empty history rather than an error —
+ * the caller is typing, and "nothing matches yet" is an ordinary answer.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {string} ref - the caller-supplied revision.
+ * @returns {Promise<{commits: Array<object>, hasMore: boolean}>} the single-commit page, empty when nothing matches.
+ */
+async function readLogRef(repositoryPath, ref) {
+  const resolved = await runGit(repositoryPath, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  const hash = resolved.ok ? resolved.stdout.trim() : ''
+  if (hash === '') return { commits: [], hasMore: false }
+  const raw = await gitOrThrow(repositoryPath, ['log', '-n1', '--no-color', `--format=${LOG_FORMAT}`, hash])
+  return { commits: parseLog(raw), hasMore: false }
+}
+
+/**
  * Read one repository's commit history.
  *
  * The page carries no per-commit file list: `--numstat` over a whole page costs
@@ -788,32 +851,65 @@ async function readInProgress(repositoryPath) {
  * history the user has not looked at. `readCommit` answers that per commit, on
  * selection.
  *
- * The history is read in pages, never in full: every commit carries its whole
- * message, so one unbounded read of a large repository answers in tens of
+ * The history is read in pages, never in full: one page of a large repository is
+ * already hundreds of kilobytes, and an unbounded read answers in tens of
  * megabytes — past the capture cap and through a single JSON response. The
  * caller continues with `args.skip`, and the answer says whether another page
  * exists.
+ *
+ * The filters are part of the query, not a step applied afterwards: the page is
+ * the newest `limit` commits *of the matching set*, so a start date three years
+ * back begins the list three years back instead of matching nothing in the
+ * newest page. `args.ref` replaces the text filters with the one commit it
+ * names.
  *
  * `args.path` is the repository to read (resolved by the caller); `args.file`
  * optionally narrows the history to one path inside it.
  *
  * @param {string} repositoryPath - absolute repository path.
  * @param {object} args - request arguments.
- * @returns {Promise<{commits: Array<object>, hasMore: boolean}>} the commit page and whether it ends the history.
+ * @returns {Promise<{commits: Array<object>, hasMore: boolean}>} the commit page and whether more of the matching history follows.
  */
 async function readLog(repositoryPath, args) {
   const limit = Number.isInteger(args.limit) ? Math.min(Math.max(args.limit, 1), MAX_LOG_PAGE) : DEFAULT_LOG_PAGE
   const skip = Number.isInteger(args.skip) ? Math.max(args.skip, 0) : 0
-  const format = `${RS}%H${US}%an${US}%ae${US}%at${US}%P${US}%D${US}%s${US}%b${US}%B`
+  if (typeof args.ref === 'string' && args.ref !== '') return readLogRef(repositoryPath, requireBareRef(args.ref))
   // One commit past the page answers "is there another page" without a second
   // call; the response itself still carries at most `limit` commits.
-  const argv = ['log', `-n${limit + 1}`, '--no-color', `--format=${format}`]
+  const argv = ['log', `-n${limit + 1}`, '--no-color', `--format=${LOG_FORMAT}`, ...logFilterArgs(args)]
   if (skip > 0) argv.push(`--skip=${skip}`)
-  if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
+  if (typeof args.branch === 'string' && args.branch !== '') argv.push(requireBareRef(args.branch))
   if (typeof args.file === 'string' && args.file !== '') argv.push('--', args.file)
   const raw = await gitOrThrow(repositoryPath, argv)
   const commits = parseLog(raw)
   return { commits: commits.slice(0, limit), hasMore: commits.length > limit }
+}
+
+/**
+ * Count one repository's matching history.
+ *
+ * The same limiters as `readLog`, run through `rev-list --count`: the panel
+ * needs to know how much history a filter matches to show progress and to know
+ * when the list has reached the end. `--count` walks the history without
+ * formatting it, so it is the cheap half of the pair.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<{total: number}>} the number of matching commits.
+ */
+async function readLogCount(repositoryPath, args) {
+  if (typeof args.ref === 'string' && args.ref !== '') {
+    const resolved = await runGit(repositoryPath, ['rev-parse', '--verify', '--quiet', `${requireBareRef(args.ref)}^{commit}`])
+    return { total: resolved.ok && resolved.stdout.trim() !== '' ? 1 : 0 }
+  }
+  const argv = ['rev-list', '--count', ...logFilterArgs(args)]
+  // `rev-list` has no default revision — unlike `log`, which reads HEAD when
+  // none is named — so an unfiltered count has to name HEAD itself.
+  argv.push(typeof args.branch === 'string' && args.branch !== '' ? requireBareRef(args.branch) : 'HEAD')
+  if (typeof args.file === 'string' && args.file !== '') argv.push('--', args.file)
+  const raw = await gitOrThrow(repositoryPath, argv)
+  const total = Number.parseInt(raw.trim(), 10)
+  return { total: Number.isFinite(total) ? total : 0 }
 }
 
 /**
@@ -918,6 +1014,25 @@ async function readCommit(repositoryPath, args) {
     binary: row.added === null || row.removed === null,
   }))
   return { commit, parent, files }
+}
+
+/**
+ * Read one commit's raw message.
+ *
+ * The history page carries the subject and the body only: sending every commit's
+ * whole message is what made a page weigh twice what it had to, and the raw text
+ * is needed for exactly two things — the selected commit's detail pane and the
+ * message the amend box edits. `%B` is read here rather than rebuilt from `%s`
+ * and `%b`, which keeps the newlines Git folds out of the subject.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<{message: string}>} the commit's raw message.
+ */
+async function readCommitMessage(repositoryPath, args) {
+  const commit = requireBareRef(args.commit)
+  const raw = await gitOrThrow(repositoryPath, ['log', '-n1', '--no-color', '--format=%B', commit])
+  return { message: raw.replace(/\s+$/, '') }
 }
 
 /**
@@ -1339,6 +1454,22 @@ const READ_OPERATIONS = {
     const repositoryPath = resolveInside(args.workspaceRoot, args.path)
     return readLog(repositoryPath, args)
   },
+
+  /**
+   * Count one repository's commit history under the caller's filters.
+   *
+   * The panel asks for this alongside the first page: the header shows how much
+   * of a filtered history is loaded, and the loader needs to know when it has
+   * reached the end.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the matching commit count.
+   */
+  async logCount(args) {
+    const repositoryPath = resolveInside(args.workspaceRoot, args.path)
+    return readLogCount(repositoryPath, args)
+  },
+
   /**
    * Read one repository's commit message template.
    *
@@ -1365,6 +1496,21 @@ const READ_OPERATIONS = {
     const repositoryPath = resolveInside(args.workspaceRoot, args.path)
     return readCommit(repositoryPath, args)
   },
+
+  /**
+   * Read one commit's raw message.
+   *
+   * Read on selection rather than carried by every history page: the message is
+   * the bulk of a page's bytes, and the panel shows one commit's at a time.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the commit's raw message.
+   */
+  async commitMessage(args) {
+    const repositoryPath = resolveInside(args.workspaceRoot, args.path)
+    return readCommitMessage(repositoryPath, args)
+  },
+
   /**
    * Read one file's unified diff.
    *

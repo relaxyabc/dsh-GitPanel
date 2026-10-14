@@ -350,6 +350,8 @@ try {
   check(commits[0]?.files === undefined, 'the log page carries no per-commit file list', commits[0]?.files)
   check(commits[0]?.refs?.some((entry) => entry.includes('main')), 'ref decorations are parsed', commits[0]?.refs)
   check(log.body.data?.hasMore === false, 'a page holding every commit reports nothing follows', log.body.data)
+  check(commits[0]?.message === undefined, 'the page leaves the raw message to commitMessage', commits[0]?.message)
+  check(Number.isFinite(commits[0]?.committedAt) && commits[0].committedAt > 0, 'the commit date is parsed for the date filter', commits[0]?.committedAt)
 
   // Paging: the page size bounds one request, not the reach of the history.
   const firstPage = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })
@@ -366,6 +368,61 @@ try {
   check((textSkip.body.data?.commits ?? []).length === 2, 'a non-numeric skip reads from the newest commit', textSkip.body.data?.commits?.length)
   const pagedFile = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1, skip: 1, file: 'readme.md' })
   check(pagedFile.body.ok === true && pagedFile.body.data?.commits?.length === 1, 'a skip and a file filter combine', pagedFile.body.data)
+
+  // ---- history count ------------------------------------------------------------
+  console.log('\nhistory count')
+  const total = await call('logCount', { workspaceRoot: root, path: 'alpha' })
+  check(total.body.ok === true && total.body.data?.total === 2, 'logCount counts the history', total.body)
+  const narrowedTotal = await call('logCount', { workspaceRoot: root, path: 'alpha', file: 'brand-new.txt' })
+  check(narrowedTotal.body.data?.total === 1, 'logCount honours a file filter', narrowedTotal.body)
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', branch: 'feature/x' })).body.data?.total >= 1, 'logCount reads another branch')
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha' })).body.data?.total === 2, 'a repeated count is stable')
+
+  // ---- history filters ----------------------------------------------------------
+  console.log('\nhistory filters')
+  // The filters are part of the query: a page is the newest commits *of the
+  // matching set*, so a date bound starts the list where the bound is instead of
+  // matching nothing in the newest page.
+  const beforeEverything = await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, since: '2000-01-01' })
+  check((beforeEverything.body.data?.commits ?? []).length === 2, 'a start date before the first commit keeps the history', beforeEverything.body.data?.commits?.length)
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', since: '2000-01-01' })).body.data?.total === 2, 'the count agrees with the page on that bound')
+  const untilOld = await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, until: '2000-01-01' })
+  check(untilOld.body.ok === true && (untilOld.body.data?.commits ?? []).length === 0, 'an end date before the first commit matches nothing', untilOld.body)
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', until: '2000-01-01' })).body.data?.total === 0, 'the count agrees with an empty date filter')
+
+  // A filtered history is still a history: paging continues through the matching
+  // set, and logCount measures that same set.
+  const filteredFirst = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1, since: '2000-01-01' })
+  const filteredSecond = await call('log', { workspaceRoot: root, path: 'alpha', limit: 1, skip: 1, since: '2000-01-01' })
+  check(filteredFirst.body.data?.commits?.[0]?.hash === commits[0].hash, 'a filtered page starts at the newest match', filteredFirst.body.data?.commits?.map((entry) => entry.subject))
+  check(filteredFirst.body.data?.hasMore === true, 'a filtered history reports that more of it follows', filteredFirst.body.data)
+  check(filteredSecond.body.data?.commits?.[0]?.hash === commits[1].hash, 'skip continues through the filtered set', filteredSecond.body.data?.commits?.map((entry) => entry.subject))
+  check(filteredSecond.body.data?.hasMore === false, 'the filtered set ends where the count said it would', filteredSecond.body.data)
+
+  const searched = await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, search: 'panel' })
+  check((searched.body.data?.commits ?? []).length === 1 && searched.body.data.commits[0].hash === commits[0].hash, 'the message search reaches the matching commit', searched.body.data?.commits?.map((entry) => entry.subject))
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', search: 'panel' })).body.data?.total === 1, 'the count measures the message search')
+  const searchedAuthor = await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, author: 'test@example.com' })
+  check((searchedAuthor.body.data?.commits ?? []).length === 2, 'the author search matches the e-mail too', searchedAuthor.body.data?.commits?.length)
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', author: 'Nobody' })).body.data?.total === 0, 'the count measures an author that matches nothing')
+  const ghostSearch = await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, search: 'no such text' })
+  check(ghostSearch.body.ok === true && (ghostSearch.body.data?.commits ?? []).length === 0, 'a search matching nothing is an empty page, not a failure', ghostSearch.body.data)
+
+  // A hash-shaped search names one commit instead of matching message text.
+  const byRef = await call('log', { workspaceRoot: root, path: 'alpha', ref: commits[1].hash })
+  check((byRef.body.data?.commits ?? []).length === 1 && byRef.body.data.commits[0].hash === commits[1].hash, 'a hash-shaped search resolves to that one commit', byRef.body.data?.commits?.map((entry) => entry.subject))
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', ref: commits[0].hash })).body.data?.total === 1, 'the count agrees on a hash-shaped search')
+  const unknownRef = await call('log', { workspaceRoot: root, path: 'alpha', ref: 'f'.repeat(40) })
+  check(unknownRef.body.ok === true && (unknownRef.body.data?.commits ?? []).length === 0, 'an unknown hash is an empty page', unknownRef.body.data)
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', ref: 'f'.repeat(40) })).body.data?.total === 0, 'the count agrees on an unknown hash')
+
+  // Everything a caller can put in an argv position is refused when it is shaped
+  // like an option.
+  check((await call('log', { workspaceRoot: root, path: 'alpha', branch: '--all' })).body.ok === false, 'an option-shaped branch is refused')
+  check((await call('log', { workspaceRoot: root, path: 'alpha', ref: '--all' })).body.ok === false, 'an option-shaped ref is refused')
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', branch: '--all' })).body.ok === false, 'logCount refuses an option-shaped branch')
+  check((await call('logCount', { workspaceRoot: root, path: 'alpha', ref: '--all' })).body.ok === false, 'logCount refuses an option-shaped ref')
+  check((await call('logCount', { path: 'alpha' })).body.ok === false, 'logCount without a workspace root is refused')
 
   // ---- per-commit files ----------------------------------------------------------
   console.log('\ncommit files')
@@ -473,16 +530,21 @@ try {
   const multilineCommit = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: multiline subject\n\nbody line one\nbody line two', paths: ['multiline.txt'] })
   check(multilineCommit.body.ok === true, 'a multi-line commit message is accepted', multilineCommit.body)
   const multilineLog = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })).body.data.commits[0]
+  const multilineRaw = await call('commitMessage', { workspaceRoot: root, path: 'alpha', commit: multilineLog.hash })
   check(multilineLog.subject === 'test: multiline subject', 'the subject is the first line', multilineLog.subject)
   check(multilineLog.body === 'body line one\nbody line two', 'the body keeps the remaining lines', multilineLog.body)
-  check(multilineLog.message === 'test: multiline subject\n\nbody line one\nbody line two', 'the raw message keeps every newline', multilineLog.message)
+  check(multilineRaw.body.ok === true && multilineRaw.body.data?.message === 'test: multiline subject\n\nbody line one\nbody line two', 'commitMessage reads every newline', multilineRaw.body.data)
   // A message with no blank line after its first line: Git folds that first
   // paragraph into the %s subject, and only %B keeps the break.
   writeFileSync(join(alpha, 'folded.txt'), 'two\n')
   const foldedCommit = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: folded subject\nsecond line of the paragraph', paths: ['folded.txt'] })
   check(foldedCommit.body.ok === true, 'a message without a blank separator is accepted', foldedCommit.body)
   const foldedLog = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })).body.data.commits[0]
-  check(foldedLog.message === 'test: folded subject\nsecond line of the paragraph', 'the raw message keeps the break a folded subject loses', foldedLog.message)
+  check(foldedLog.subject === 'test: folded subject second line of the paragraph', 'the page subject is the one Git folds', foldedLog.subject)
+  const foldedRaw = await call('commitMessage', { workspaceRoot: root, path: 'alpha', commit: foldedLog.hash })
+  check(foldedRaw.body.data?.message === 'test: folded subject\nsecond line of the paragraph', 'commitMessage keeps the break a folded subject loses', foldedRaw.body.data)
+  check((await call('commitMessage', { workspaceRoot: root, path: 'alpha', commit: '--all' })).body.ok === false, 'an option-shaped commit is refused')
+  check((await call('commitMessage', { workspaceRoot: root, path: 'alpha' })).body.ok === false, 'commitMessage without a commit is refused')
 
   // ---- commit template -----------------------------------------------------------
   console.log('\ncommit template')
