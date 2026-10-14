@@ -12,18 +12,19 @@ window.__ModuleLoader__.load({
   id: 'GitPanel',
   chunk: 'client.diff.js',
   factory: () => ({ create: (shared) => {
-    const { h, React, boundTranslate, cx, basename, fill, MAX_DIFF_ROWS, CLOSE_GLYPH, DASH, UP, DOWN } = shared
+    const { h, React, boundTranslate, cx, basename, fill, CLOSE_GLYPH, DASH, UP, DOWN } = shared
 
     /**
      * Parse one unified diff into the rows a side-by-side view renders.
      *
      * A hunk's deletions and additions are buffered and paired in order, so the
      * old line sits beside the line that replaced it; a context line occupies
-     * both sides. Anything past `MAX_DIFF_ROWS` is dropped and reported, so one
-     * enormous generated file cannot freeze the tab.
+     * both sides. Every row is kept: a file of ten thousand lines is an ordinary
+     * file, and the capture cap on the Host already bounds what one diff can
+     * weigh on the way here.
      *
      * @param {string} text - the unified diff.
-     * @returns {{ head: Array<string>, hunks: Array<object>, added: number, removed: number, binary: boolean, truncated: boolean }} the parsed diff.
+     * @returns {{ head: Array<string>, hunks: Array<object>, added: number, removed: number, binary: boolean }} the parsed diff.
      */
     function parseUnifiedDiff(text) {
       const head = []
@@ -33,26 +34,20 @@ window.__ModuleLoader__.load({
       let hunk = null
       let left = 0
       let right = 0
-      let rows = 0
       let added = 0
       let removed = 0
       let binary = false
-      let truncated = false
 
       /**
-       * Append one row while the cap allows it.
+       * Append one row to the hunk being read.
        *
        * @param {object|null} old - `{ no, text }` for the old side.
        * @param {object|null} current - `{ no, text }` for the new side.
        * @param {string} kind - `context`, `change`, `del`, or `add`.
-       * @returns {boolean} whether the row was kept.
+       * @returns {undefined} nothing.
        */
       const push = (old, current, kind) => {
-        if (hunk === null) return false
-        if (rows >= MAX_DIFF_ROWS) {
-          truncated = true
-          return false
-        }
+        if (hunk === null) return
         hunk.rows.push({
           kind,
           leftNo: old === null ? null : old.no,
@@ -60,14 +55,12 @@ window.__ModuleLoader__.load({
           rightNo: current === null ? null : current.no,
           right: current === null ? null : current.text,
         })
-        rows += 1
-        return true
       }
 
       /** Pair the buffered deletions with the additions that replaced them. */
       const flush = () => {
         const count = Math.max(pendingRemoved.length, pendingAdded.length)
-        for (let index = 0; index < count && !truncated; index += 1) {
+        for (let index = 0; index < count; index += 1) {
           const old = pendingRemoved[index] ?? null
           const current = pendingAdded[index] ?? null
           const kind = old === null ? 'add' : current === null ? 'del' : 'change'
@@ -78,7 +71,7 @@ window.__ModuleLoader__.load({
       }
 
       for (const line of String(text ?? '').split('\n')) {
-        if (binary || truncated) break
+        if (binary) break
         const hunkHeader = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
         if (hunkHeader !== null) {
           flush()
@@ -118,7 +111,7 @@ window.__ModuleLoader__.load({
         }
       }
       flush()
-      return { head, hunks, added, removed, binary, truncated }
+      return { head, hunks, added, removed, binary }
     }
 
     /**
@@ -337,7 +330,6 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
-              parsed.truncated ? h('div', { className: 'git-panel-empty' }, fill(t('diff.truncated'), { count: MAX_DIFF_ROWS })) : null,
             ),
           ),
         ),

@@ -379,6 +379,9 @@ let serverHistory = [
 /** Whether the fake Host ignores filter arguments, the way a build that predates them does. */
 let serverIgnoresFilters = false
 
+/** Context lines the fake Host answers a diff with; 0 serves the small fixture. */
+let serverDiffLineCount = 0
+
 /**
  * The fake Host's answer for one filtered history.
  *
@@ -494,6 +497,11 @@ function answerFor(request) {
     // An older Host ignores the commit argument and answers with the worktree
     // diff, which is empty for a file that only the commit touched.
     if (staleHost && typeof request.args?.commit === 'string') return { diff: '', untracked: false }
+    if (serverDiffLineCount > 0) {
+      // One hunk of context lines: every line becomes one side-by-side row.
+      const body = Array.from({ length: serverDiffLineCount }, (_, index) => ` line ${index + 1}`).join('\n')
+      return { diff: `diff --git a/src/big.ts b/src/big.ts\nindex 111..222 100644\n--- a/src/big.ts\n+++ b/src/big.ts\n@@ -1,${serverDiffLineCount} +1,${serverDiffLineCount} @@\n${body}\n`, untracked: false }
+    }
     if (request.args?.file === 'assets/logo.png') return { diff: 'diff --git a/assets/logo.png b/assets/logo.png\nBinary files a/assets/logo.png and b/assets/logo.png differ\n', untracked: false }
     return { diff: 'diff --git a/src/index.ts b/src/index.ts\nindex 111..222 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,2 +1,3 @@\n-old line\n+new line\n+another\n', untracked: false }
   }
@@ -1073,8 +1081,8 @@ toggleHelpButton?.props?.onClick?.()
 const helpShown = await settle(staged)
 check(
   collectText(helpShown.tree).some((entry) => entry.includes('Off: only the changed hunks are shown.')) &&
-    collectText(helpShown.tree).some((entry) => entry.includes('at most 3000 rows')),
-  'the explanation button reveals the whole-file rules',
+    !collectText(helpShown.tree).some((entry) => entry.includes('Change navigation stays available either way')),
+  'the explanation button reveals the whole-file rules and nothing more',
   collectText(helpShown.tree).slice(-6),
 )
 check(
@@ -1318,6 +1326,23 @@ check(modalClose !== undefined, 'the diff modal offers a close control')
 modalClose?.props?.onClick?.()
 view = await settle(view)
 check(find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-modal')) === undefined, 'closing the modal returns to the panel')
+
+// A diff of a few thousand lines is an ordinary file, so nothing is dropped.
+console.log('\ndiff size')
+serverDiffLineCount = 3200
+const bigFileRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onDoubleClick === 'function' && collectText(element).includes('fresh.txt'),
+)
+bigFileRow?.props?.onDoubleClick?.()
+view = await settle(view)
+const bigModal = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-modal'))
+const bigRows = findAll(bigModal ?? view.tree, (element) => element.props?.className === 'git-panel-sbs-row')
+check(bigModal !== undefined && bigRows.length === 3200, 'a diff larger than the old row cap renders every row', bigRows.length)
+check(!collectText(bigModal ?? view.tree).some((entry) => entry.includes('Only the first')), 'a large diff carries no truncation note')
+find(view.tree, (element) => element.type === 'button' && element.props?.title === 'Close')?.props?.onClick?.()
+view = await settle(view)
+serverDiffLineCount = 0
 
 
 console.log('\nHost half older than this panel')

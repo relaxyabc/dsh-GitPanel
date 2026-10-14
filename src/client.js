@@ -89,9 +89,6 @@ window.__ModuleLoader__.load({
      */
     const HISTORY_FILTER_DEBOUNCE_MS = 300
 
-    /** Most side-by-side diff rows one modal renders before it truncates. */
-    const MAX_DIFF_ROWS = 3000
-
     /** Shared empty working-tree list, so an unchanged repository keeps a stable identity. */
     const NO_FILES = []
 
@@ -542,7 +539,6 @@ window.__ModuleLoader__.load({
         UP,
         DOWN,
         // Limits and identities.
-        MAX_DIFF_ROWS,
         COMMIT_PAGE,
         HISTORY_LOAD_AHEAD_PX,
         HISTORY_LOAD_CAP,

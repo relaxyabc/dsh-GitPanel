@@ -20,18 +20,20 @@ window.__ModuleLoader__.load({
     } = shared
 
     /**
-     * The two paragraphs every settings explanation is made of.
+     * The paragraphs a settings explanation is made of.
      *
-     * The first says what the setting does; the second states its bounds and
-     * what turning it on costs. Both fields use it, so their disclosures read
-     * the same whether the primitive draws them or the card does.
+     * The first says what the setting does; the optional second states its
+     * bounds and what turning it on costs. A field with nothing to add to the
+     * first paragraph simply has no second one — a disclosure that only repeats
+     * itself is noise on the settings page.
      *
      * @param {string} body - what the setting does.
-     * @param {string} note - its bounds and its cost.
+     * @param {string} [note] - its bounds and its cost, when there is one.
      * @returns {object} the disclosure's content.
      */
     function helpParagraphs(body, note) {
-      return h(React.Fragment, null, h('p', null, body), h('p', null, note))
+      const text = typeof note === 'string' ? note.trim() : ''
+      return h(React.Fragment, null, h('p', null, body), text === '' ? null : h('p', null, text))
     }
 
     /**
@@ -158,7 +160,7 @@ window.__ModuleLoader__.load({
               ? h(
                   'div',
                   { id: WHOLE_FILE_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('wholeFileDiff.help') },
-                  helpParagraphs(t('wholeFileDiff.help.body'), t('wholeFileDiff.help.note')),
+                  helpParagraphs(t('wholeFileDiff.help.body')),
                 )
               : null,
           ),
