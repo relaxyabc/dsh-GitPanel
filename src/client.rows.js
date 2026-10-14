@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
   id: 'GitPanel',
   chunk: 'client.rows.js',
   factory: () => ({ create: (shared) => {
-    const { h, React, boundTranslate, cx, basename, statusText, relativeAge, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
+    const { h, React, boundTranslate, cx, basename, statusText, relativeAge, commitMessageParts, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
 
     /**
      * One pointer context menu.
@@ -181,6 +181,9 @@ window.__ModuleLoader__.load({
      * @returns {object} the row element.
      */
     function CommitRow({ commit, selected, onSelect, onContextMenu, t = boundTranslate }) {
+      // The raw message's first line, not Git's folded subject: a subject
+      // paragraph that ran over several lines stays one line here too.
+      const { subject } = commitMessageParts(commit)
       return h(
         'div',
         {
@@ -196,7 +199,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'git-panel-commit' },
-          h('div', { className: 'git-panel-commit-top' }, h('span', { className: 'git-panel-subject' }, commit.subject || t('noMessage'))),
+          h('div', { className: 'git-panel-commit-top' }, h('span', { className: 'git-panel-subject' }, subject || t('noMessage'))),
           h(
             'div',
             { className: 'git-panel-meta' },

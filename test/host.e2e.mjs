@@ -449,6 +449,44 @@ try {
   check(resetHard.body.ok === true, 'reset --hard succeeds', resetHard.body)
   check((await call('state', { workspaceRoot: root, path: 'alpha' })).body.data.files.length === 0, 'reset --hard clears the tree')
 
+  // ---- commit message newlines ---------------------------------------------------
+  console.log('\ncommit message newlines')
+  // The tree is clean here, so each case brings the file it commits.
+  writeFileSync(join(alpha, 'multiline.txt'), 'one\n')
+  const multilineCommit = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: multiline subject\n\nbody line one\nbody line two', paths: ['multiline.txt'] })
+  check(multilineCommit.body.ok === true, 'a multi-line commit message is accepted', multilineCommit.body)
+  const multilineLog = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })).body.data.commits[0]
+  check(multilineLog.subject === 'test: multiline subject', 'the subject is the first line', multilineLog.subject)
+  check(multilineLog.body === 'body line one\nbody line two', 'the body keeps the remaining lines', multilineLog.body)
+  check(multilineLog.message === 'test: multiline subject\n\nbody line one\nbody line two', 'the raw message keeps every newline', multilineLog.message)
+  // A message with no blank line after its first line: Git folds that first
+  // paragraph into the %s subject, and only %B keeps the break.
+  writeFileSync(join(alpha, 'folded.txt'), 'two\n')
+  const foldedCommit = await call('commit', { workspaceRoot: root, path: 'alpha', message: 'test: folded subject\nsecond line of the paragraph', paths: ['folded.txt'] })
+  check(foldedCommit.body.ok === true, 'a message without a blank separator is accepted', foldedCommit.body)
+  const foldedLog = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 1 })).body.data.commits[0]
+  check(foldedLog.message === 'test: folded subject\nsecond line of the paragraph', 'the raw message keeps the break a folded subject loses', foldedLog.message)
+
+  // ---- commit template -----------------------------------------------------------
+  console.log('\ncommit template')
+  const noTemplate = await call('commitTemplate', { workspaceRoot: root, path: 'alpha' })
+  check(noTemplate.body.ok === true, 'commitTemplate succeeds without any template', noTemplate.body)
+  check(noTemplate.body.data?.template === '', 'a repository without a template answers an empty one', noTemplate.body.data)
+  writeFileSync(join(alpha, '.gitcommit'), '[topic] one line\n\n# - why this change\n')
+  const fileTemplate = await call('commitTemplate', { workspaceRoot: root, path: 'alpha' })
+  check(fileTemplate.body.data?.template === '[topic] one line\n\n# - why this change\n', 'a .gitcommit file is read as the template', fileTemplate.body.data)
+  writeFileSync(join(alpha, 'TEMPLATE.txt'), 'from the configured template\n')
+  git(alpha, ['config', 'commit.template', 'TEMPLATE.txt'])
+  const configuredTemplate = await call('commitTemplate', { workspaceRoot: root, path: 'alpha' })
+  check(configuredTemplate.body.data?.template === 'from the configured template\n', 'commit.template overrides the .gitcommit file', configuredTemplate.body.data)
+  // The fixture must stay clean: the untracked files and the local config would
+  // otherwise surface in the later working-tree and push checks.
+  git(alpha, ['config', '--unset', 'commit.template'])
+  rmSync(join(alpha, '.gitcommit'), { force: true })
+  rmSync(join(alpha, 'TEMPLATE.txt'), { force: true })
+  const escapedTemplate = await call('commitTemplate', { workspaceRoot: alpha, path: '../libsource' })
+  check(escapedTemplate.body.ok === false, 'commitTemplate refuses a path outside the workspace root', escapedTemplate.body)
+
   // ---- push --------------------------------------------------------------------
   console.log('\npush')
   const bare = join(root, 'alpha-remote.git')

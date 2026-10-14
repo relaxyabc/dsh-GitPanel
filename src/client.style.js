@@ -21,14 +21,19 @@ window.__ModuleLoader__.load({
       '.git-panel-field{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px;max-width:calc(320px - 12px)}',
       '.git-panel-field-label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-field .git-panel-select{width:100%;max-width:none;padding:3px 8px}',
-      '.git-panel-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
+      '.git-panel-branch-chip{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:220px;padding:2px 8px;border-radius:5px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#1f2328)}',
       '.git-panel-branch-chip-glyph{display:inline-flex;color:var(--dsw-alias-brand-primary,#0969da)}',
       '.git-panel-branch-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}',
       '.git-panel-spacer{flex:1;min-width:4px}',
-      '.git-panel-select{max-width:260px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 6px;font:inherit;cursor:pointer}',
-      '.git-panel-input{border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 7px;font:inherit;min-width:0}',
+      // A theme-independent control edge: mixing from the secondary label color
+      // keeps inputs, selects and buttons visible on a white page without
+      // turning them loud on a dark one, which the plain border token could
+      // not do in light mode.
+      '.git-panel-select{max-width:260px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:inherit;border-radius:5px;padding:2px 6px;font:inherit;cursor:pointer}',
+      '.git-panel-select:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
+      '.git-panel-input{border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:inherit;border-radius:5px;padding:2px 7px;font:inherit;min-width:0}',
       '.git-panel-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
-      '.git-panel-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 8px;font:inherit;cursor:pointer;white-space:nowrap}',
+      '.git-panel-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:2px 8px;font:inherit;cursor:pointer;white-space:nowrap}',
       '.git-panel-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
       '.git-panel-btn:disabled{opacity:.45;cursor:default}',
       '.git-panel-btn-primary{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da)}',
@@ -48,6 +53,14 @@ window.__ModuleLoader__.load({
       '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
       '.git-panel-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
+      // The history filter row sits between the pane head and the list and
+      // wraps on a narrow column: search on its own line, author and the two
+      // date bounds sharing the next.
+      '.git-panel-filters{display:flex;flex-direction:column;gap:4px;flex:none;padding:6px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      '.git-panel-filters-row{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap}',
+      '.git-panel-filters-row .git-panel-input{flex:1 1 96px;font-size:11.5px}',
+      '.git-panel-filters-row .git-panel-input[type=date]{flex:1 1 104px}',
+      '.git-panel-filters-row .git-panel-select{flex:none;font-size:11.5px}',
       '.git-panel-row{display:flex;align-items:center;gap:7px;padding:3px 10px;cursor:default}',
       '.git-panel-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
       '.git-panel-row-sel,.git-panel-row-sel:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 18%,transparent)}',
@@ -83,7 +96,7 @@ window.__ModuleLoader__.load({
       '.git-panel-kv-key{color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-kv-value{overflow:hidden;text-overflow:ellipsis;word-break:break-all}',
       '.git-panel-msg{display:flex;flex-direction:column;gap:6px;flex:none;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
-      '.git-panel-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-layer-1,transparent);color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
+      '.git-panel-textarea{width:100%;min-height:56px;resize:vertical;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:inherit;border-radius:5px;padding:5px 7px;font:inherit}',
       '.git-panel-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#0969da)}',
       // The commit box is the panel's main input, so it gets a height of its own,
       // scaled to the viewport and bounded: the shared rule above stays one line
@@ -93,7 +106,7 @@ window.__ModuleLoader__.load({
       '.git-panel-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
       // The amend switch gets a full-width, bordered row of its own: tucked into
       // the button row as plain text it was too easy to miss.
-      '.git-panel-amend{display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));border-radius:5px;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;white-space:nowrap}',
+      '.git-panel-amend{display:flex;align-items:center;gap:6px;width:100%;padding:3px 8px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);border-radius:5px;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;white-space:nowrap}',
       '.git-panel-amend:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14))}',
       '.git-panel-amend-on,.git-panel-amend-on:hover{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da);font-weight:600}',
       '.git-panel-amend-off,.git-panel-amend-off:hover{opacity:.55;cursor:default}',

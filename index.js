@@ -8,10 +8,11 @@
  * inherits the same Host/Origin fence and browser-session authentication as the
  * shipped API bridge; it is never a bare unauthenticated webserver route.
  *
- * Reads are `repos`, `state`, `log`, `commitFiles`, and `diff`; writes are
- * `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`, `checkout`,
- * `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`, `merge`,
- * `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`, and `submodule`.
+ * Reads are `repos`, `state`, `log`, `commitFiles`, `commitTemplate`, and
+ * `diff`; writes are `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`,
+ * `checkout`, `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`,
+ * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`, and
+ * `submodule`.
  * The plugin Config holds the repository discovery depth and the whole-file diff
  * switch; both are plain fields the Plugins page edits through the Host settings
  * service.
@@ -19,7 +20,7 @@
  * @module GitPanel
  */
 import { execFile } from 'node:child_process'
-import { readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 /** Exact Fetch route the browser half posts operations to. */
@@ -138,6 +139,16 @@ const MAX_REPOSITORIES = 64
 
 /** Most directory entries one discovery call visits. */
 const MAX_DISCOVERY_ENTRIES = 20_000
+
+/**
+ * File read as the commit template when Git's own `commit.template` config
+ * names none. A repository that ships this file gets it offered in the commit
+ * box without any configuration.
+ */
+const COMMIT_TEMPLATE_FALLBACK = '.gitcommit'
+
+/** Largest commit template accepted, in bytes; a bigger file is not a template. */
+const MAX_TEMPLATE_BYTES = 1024 * 1024
 
 /** Record separator separating two commit records in `git log` output. */
 const RS = '\u001e'
@@ -500,8 +511,11 @@ function statusLetter(xy) {
  * Parse one `git log --format` payload into structured commits.
  *
  * Records are separated by the format's own record separator and their fields
- * by the unit separator, so a multi-line commit body — which is the only field
- * that may contain newlines — needs no line-oriented parsing at all.
+ * by the unit separator, so the multi-line fields — the body and the raw
+ * message, the only ones that may contain newlines — need no line-oriented
+ * parsing at all. The raw message rides last because Git folds a subject
+ * paragraph's own line breaks into spaces for `%s`; only `%B` keeps every
+ * newline, and it is what the panel shows and amends from.
  *
  * @param {string} raw - the formatted log output.
  * @returns {Array<object>} commits, newest first.
@@ -525,7 +539,11 @@ function parseLog(raw) {
         .map((entry) => entry.trim())
         .filter((entry) => entry !== ''),
       subject: fields[6] ?? '',
-      body: fields.slice(7).join(US).trim(),
+      // The body is sliced from both ends rather than read at a fixed index:
+      // a unit separator inside it splits the record into extra fields, and
+      // the far end stays the raw message's.
+      body: fields.slice(7, -1).join(US).trim(),
+      message: (fields[fields.length - 1] ?? '').trim(),
     })
   }
   return commits
@@ -773,12 +791,51 @@ async function readInProgress(repositoryPath) {
  */
 async function readLog(repositoryPath, args) {
   const limit = Number.isInteger(args.limit) ? Math.min(Math.max(args.limit, 1), 200) : 30
-  const format = `${RS}%H${US}%an${US}%ae${US}%at${US}%P${US}%D${US}%s${US}%b`
+  const format = `${RS}%H${US}%an${US}%ae${US}%at${US}%P${US}%D${US}%s${US}%b${US}%B`
   const argv = ['log', `-n${limit}`, '--no-color', `--format=${format}`]
   if (typeof args.branch === 'string' && args.branch !== '') argv.push(args.branch)
   if (typeof args.file === 'string' && args.file !== '') argv.push('--', args.file)
   const raw = await gitOrThrow(repositoryPath, argv)
   return { commits: parseLog(raw) }
+}
+
+/**
+ * Read one repository's commit message template.
+ *
+ * Git's own source wins: the file `commit.template` names, with a relative
+ * path resolved against the repository exactly as `git commit` resolves it
+ * from the worktree. A repository that configures nothing falls back to a
+ * `.gitcommit` file in its root. Neither present is an empty template rather
+ * than an error — most repositories carry none, and the panel then leaves the
+ * commit box alone. The template path comes from the repository's own config,
+ * not from the request, so it is not a workspace-fence parameter: Git itself
+ * would read the same file.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<{ template: string }>} the template text, empty when none applies.
+ */
+async function readCommitTemplate(repositoryPath) {
+  const configured = await runGit(repositoryPath, ['config', '--get', 'commit.template'])
+  const candidates = []
+  if (configured.ok) {
+    const named = configured.stdout.trim()
+    if (named !== '') candidates.push(resolve(repositoryPath, named))
+  }
+  candidates.push(join(repositoryPath, COMMIT_TEMPLATE_FALLBACK))
+  for (const candidate of candidates) {
+    const info = await stat(candidate).catch(() => null)
+    if (info === null || !info.isFile() || info.size > MAX_TEMPLATE_BYTES) continue
+    try {
+      const template = await readFile(candidate, 'utf8')
+      // A text check, not a charset guess: a config that names a binary file
+      // must not leak its bytes into a commit message box.
+      if (template.includes('\0')) continue
+      return { template }
+    } catch {
+      continue
+    }
+  }
+  return { template: '' }
 }
 
 /**
@@ -1264,6 +1321,19 @@ const READ_OPERATIONS = {
   async log(args) {
     const repositoryPath = resolveInside(args.workspaceRoot, args.path)
     return readLog(repositoryPath, args)
+  },
+  /**
+   * Read one repository's commit message template.
+   *
+   * Git reads the file `commit.template` names, falling back to a `.gitcommit`
+   * file in the repository root; neither present answers an empty template.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the template text.
+   */
+  async commitTemplate(args) {
+    const repositoryPath = resolveInside(args.workspaceRoot, args.path)
+    return readCommitTemplate(repositoryPath)
   },
   /**
    * Read the paths one commit changed.

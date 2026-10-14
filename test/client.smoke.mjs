@@ -331,6 +331,9 @@ let serverDepth = 3
 /** The whole-file diff switch the fake Host currently has stored. */
 let serverWholeFile = false
 
+/** The commit template the fake Host currently has stored. */
+let serverTemplate = ''
+
 /** The operation the fake Host's repository is stopped inside, if any. */
 let serverInProgress = null
 
@@ -338,7 +341,7 @@ let serverInProgress = null
 let staleHost = false
 
 /** The operations a Host build without the newest additions does not know. */
-const NEWER_OPERATIONS = ['commitFiles', 'discoveryDepth']
+const NEWER_OPERATIONS = ['commitFiles', 'commitTemplate', 'discoveryDepth']
 
 /**
  * Answer one Host operation.
@@ -400,13 +403,19 @@ function answerFor(request) {
           refs: ['HEAD -> main'],
           subject: 'feat: greet the world',
           body: 'A longer explanation\nof the change.',
+          // The raw message only a current Host half reports: it keeps the
+          // newlines the folded %s subject cannot.
+          message: 'feat: greet the world\n\nA longer explanation\nof the change.',
           // A Host build that predates `commitFiles` reports the file stats here.
           files: [
             { added: 3, removed: 1, path: 'src/index.ts' },
             { added: null, removed: null, path: 'assets/logo.png' },
           ],
         },
-        { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '' },
+        // A message with no blank line after its first line: Git folds that
+        // first paragraph into the subject, and only the raw message keeps
+        // the break.
+        { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '', message: 'chore: scaffold\nfollowed by a note' },
       ],
     }
   }
@@ -425,6 +434,9 @@ function answerFor(request) {
   if (request.op === 'discoveryDepth') {
     serverDepth = Number(request.args?.value)
     return { discoveryDepth: serverDepth, persisted: true }
+  }
+  if (request.op === 'commitTemplate') {
+    return { template: serverTemplate }
   }
   if (request.op === 'diff') {
     // An older Host ignores the commit argument and answers with the worktree
@@ -931,6 +943,12 @@ const tagRule = /\.git-panel-tag\{[^}]*\}/.exec(css)?.[0] ?? ''
 check(tagRule.includes('color-mix') && !tagRule.includes('#fff'), 'the HEAD tag stays readable in the dark palette', tagRule)
 const modalRule = /\.git-panel-modal\{position:fixed[^}]*\}/.exec(css)?.[0] ?? ''
 check(modalRule.includes('position:fixed'), 'the diff modal renders centered over the panel', modalRule.slice(0, 48))
+const inputRule = /\.git-panel-input\{([^}]*)\}/.exec(css)?.[1] ?? ''
+check(inputRule.includes('color-mix') && inputRule.includes('--dsw-alias-bg-layer-2'), 'inputs carry a visible edge and a field background in both palettes', inputRule)
+const btnRule = /\.git-panel-btn\{([^}]*)\}/.exec(css)?.[1] ?? ''
+check(btnRule.includes('color-mix') && !btnRule.includes('--dsw-alias-border-l1'), 'buttons carry the same visible edge', btnRule)
+const selectRule = /(?:^|\n)\.git-panel-select\{([^}]*)\}/.exec(css)?.[1] ?? ''
+check(selectRule.includes('color-mix') && selectRule.includes('--dsw-alias-bg-layer-2'), 'selects carry the same edge and field background', selectRule)
 check(!view.text().includes('Back to chat'), 'the back-to-chat button is gone from the toolbar')
 
 console.log('\nPlugins page settings card')
@@ -1302,6 +1320,92 @@ const filtered = view.text()
 check(filtered.includes('fix/rename-docs'), 'the filter keeps a matching branch', filtered.slice(-14))
 check(!filtered.includes('topic'), 'the filter drops a non-matching branch', filtered.filter((entry) => entry === 'topic'))
 
+console.log('\nhistory filters')
+const searchInput = find(view.tree, (element) => element.props?.placeholder === 'Filter by message or hash')
+check(searchInput !== undefined, 'the history filter offers a message and hash input')
+searchInput?.props?.onChange?.({ target: { value: 'scaffold' } })
+view = await settle(view)
+let historyText = view.text()
+check(historyText.includes('chore: scaffold') && !historyText.includes('feat: greet the world'), 'the message filter keeps only the matching commits', historyText.slice(-8))
+check(historyText.includes('1/2'), 'the pane head counts the narrowed list', historyText.slice(-8))
+searchInput?.props?.onChange?.({ target: { value: 'bbbbbbbb' } })
+view = await settle(view)
+historyText = view.text()
+check(historyText.includes('chore: scaffold') && !historyText.includes('feat: greet the world'), 'the hash filter matches the short hash', historyText.slice(-8))
+const authorInput = find(view.tree, (element) => element.props?.placeholder === 'Filter by author')
+check(authorInput !== undefined, 'the history filter offers an author input')
+searchInput?.props?.onChange?.({ target: { value: '' } })
+authorInput?.props?.onChange?.({ target: { value: 'ada@example.com' } })
+view = await settle(view)
+historyText = view.text()
+check(historyText.includes('feat: greet the world') && !historyText.includes('chore: scaffold'), 'the author filter matches the e-mail address', historyText.slice(-8))
+authorInput?.props?.onChange?.({ target: { value: '' } })
+const dateInputs = findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date')
+check(dateInputs.length === 2, 'the history filter offers the two date bounds', dateInputs.length)
+dateInputs[0]?.props?.onChange?.({ target: { value: '2023-08-01' } })
+view = await settle(view)
+historyText = view.text()
+check(historyText.includes('feat: greet the world') && !historyText.includes('chore: scaffold'), 'the since bound keeps the newer commit', historyText.slice(-8))
+dateInputs[1]?.props?.onChange?.({ target: { value: '2023-08-01' } })
+dateInputs[0]?.props?.onChange?.({ target: { value: '' } })
+view = await settle(view)
+historyText = view.text()
+check(historyText.includes('chore: scaffold') && !historyText.includes('feat: greet the world'), 'the until bound keeps the older commit', historyText.slice(-8))
+dateInputs[0]?.props?.onChange?.({ target: { value: '2024-01-01' } })
+view = await settle(view)
+check(view.text().some((entry) => entry.includes('No commit matches the filters')), 'an impossible filter explains itself', view.text().slice(-8))
+const clearFilters = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Clear filters')
+check(clearFilters !== undefined, 'an active filter row offers a clear control')
+clearFilters?.props?.onClick?.()
+view = await settle(view)
+historyText = view.text()
+check(historyText.includes('feat: greet the world') && historyText.includes('chore: scaffold'), 'clearing the filters restores the whole page', historyText.slice(-8))
+check(find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Clear filters') === undefined, 'the clear control disappears with the filters')
+const filterStyle = find(view.tree, (element) => element.type === 'style')
+const filterCss = Array.isArray(filterStyle?.children) ? filterStyle.children.flat().join('') : ''
+check(
+  filterCss.includes('.git-panel-filters{') && filterCss.includes('.git-panel-filters-row{'),
+  'the filter row carries the stylesheet its own classes need',
+  filterCss.slice(filterCss.indexOf('.git-panel-filters'), filterCss.indexOf('.git-panel-filters') + 80),
+)
+
+console.log('\nhistory quick ranges')
+const rangeSelect = find(view.tree, (element) => element.type === 'select' && element.props?.['aria-label'] === 'Quick range')
+check(rangeSelect !== undefined, 'the history filter offers a quick range select')
+check(rangeSelect?.props?.value === '', 'the quick range starts on all time')
+/**
+ * The local date the panel's quick ranges spell, mirrored from the panel.
+ * @param {number} back - whole days before today.
+ * @returns {string} the date string.
+ */
+const rangeDay = (back) => {
+  const day = new Date()
+  day.setDate(day.getDate() - back)
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
+}
+rangeSelect?.props?.onChange?.({ target: { value: 'week' } })
+view = await settle(view)
+let rangeSince = findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date')[0]
+check(rangeSince?.props?.value === rangeDay(6), 'the 7-day range fills the since bound with the day six days back', rangeSince?.props?.value)
+check(findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date')[1]?.props?.value === '', 'the 7-day range leaves the until bound open')
+check(find(view.tree, (element) => element.type === 'select' && element.props?.['aria-label'] === 'Quick range')?.props?.value === 'week', 'the select shows the active range')
+check(view.text().some((entry) => entry.includes('No commit matches the filters')), 'a recent range excludes the old fixture commits', view.text().slice(-8))
+rangeSince?.props?.onChange?.({ target: { value: '2023-08-01' } })
+view = await settle(view)
+check(find(view.tree, (element) => element.type === 'select' && element.props?.['aria-label'] === 'Quick range')?.props?.value === '', 'a hand-edited bound turns the range back to custom')
+rangeSince?.props?.onChange?.({ target: { value: '' } })
+view = await settle(view)
+check(find(view.tree, (element) => element.type === 'select' && element.props?.['aria-label'] === 'Quick range')?.props?.value === '', 'clearing the bounds returns to all time')
+rangeSelect?.props?.onChange?.({ target: { value: 'month' } })
+view = await settle(view)
+rangeSince = findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date')[0]
+check(rangeSince?.props?.value === rangeDay(29), 'the month range fills the since bound with the day a month back', rangeSince?.props?.value)
+rangeSelect?.props?.onChange?.({ target: { value: '' } })
+view = await settle(view)
+check(findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date').every((input) => input.props?.value === ''), 'all time clears both bounds')
+check(view.text().includes('feat: greet the world') && view.text().includes('chore: scaffold'), 'all time restores the whole page')
+
 console.log('\ncommit selection')
 requests.length = 0
 const commitRow = find(view.tree, (element) => typeof element.props?.onClick === 'function' && collectText(element).includes('feat: greet the world'))
@@ -1616,6 +1720,43 @@ check(plainRequest?.args?.message === 'a normal commit', 'an ordinary commit car
 // would clear it, so the cleared message box stands in for the successful write.
 const afterCommit = find(committedPlain.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
 check(afterCommit?.props?.value === '', 'a successful commit clears the message box', afterCommit?.props?.value)
+
+console.log('\ncommit message newlines')
+// The second commit's message has no blank line after its first line, so Git
+// folds that paragraph into its %s subject; only the raw message keeps the
+// break, and every display and edit surface reads from it.
+const newlineView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const foldedRow = find(newlineView.tree, (element) => typeof element.props?.onClick === 'function' && collectText(element).includes('chore: scaffold'))
+check(foldedRow !== undefined, 'the commit whose subject Git folded renders')
+foldedRow?.props?.onClick?.()
+const newlineSettled = await settle(newlineView)
+check(
+  newlineSettled.text().some((entry) => entry === 'followed by a note'),
+  'the commit detail keeps the newline the folded subject lost',
+  newlineSettled.text().slice(-8),
+)
+
+console.log('\ncommit template')
+serverTemplate = 'type: brief summary\n\n# - why this change\n'
+const templateView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const templateBox = find(templateView.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(templateBox?.props?.value === 'type: brief summary', 'the commit box is seeded with the template, comments stripped', templateBox?.props?.value)
+templateBox?.props?.onChange?.({ target: { value: 'my own draft' } })
+const templateTyped = await settle(templateView)
+requests.length = 0
+byLabel(templateTyped.tree, 'Commit')?.props?.onClick?.()
+const templateCommitted = await settle(templateTyped)
+const templateRequest = requests.find((entry) => entry.op === 'commit')
+check(templateRequest?.args?.message === 'my own draft', 'the commit carries the draft, not the template', templateRequest?.args)
+const templateBoxAfter = find(templateCommitted.tree, (element) => element.type === 'textarea' && element.props?.className === 'git-panel-textarea')
+check(templateBoxAfter?.props?.value === 'type: brief summary', 'a plain commit is followed by a fresh template', templateBoxAfter?.props?.value)
+serverTemplate = ''
 
 console.log('\nselect all and whole-file diff')
 requests.length = 0

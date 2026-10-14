@@ -309,6 +309,34 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Split a commit's message into its parts, keeping every newline.
+     *
+     * Git folds a subject paragraph's own line breaks into spaces for `%s`, so
+     * a commit whose first paragraph runs over several lines would lose its
+     * newlines if the panel rebuilt the message from subject and body. The raw
+     * message field is the only one that keeps them, and every display and
+     * edit surface reads through here so a Host that predates the field still
+     * answers with the older subject-plus-body shape.
+     *
+     * @param {object|null} commit - the commit record.
+     * @returns {{ subject: string, body: string, full: string }} the first line, the remainder below it, and the whole message.
+     */
+    function commitMessageParts(commit) {
+      const raw = commit !== null && typeof commit === 'object' && typeof commit.message === 'string' && commit.message.trim() !== ''
+        ? commit.message.replace(/\s+$/, '')
+        : null
+      if (raw === null) {
+        const subject = typeof commit?.subject === 'string' ? commit.subject : ''
+        const body = typeof commit?.body === 'string' ? commit.body : ''
+        return { subject, body, full: body === '' ? subject : `${subject}\n\n${body}` }
+      }
+      const split = raw.indexOf('\n')
+      const subject = split === -1 ? raw : raw.slice(0, split)
+      const body = split === -1 ? '' : raw.slice(split + 1).replace(/^\n+/, '').replace(/\s+$/, '')
+      return { subject, body, full: raw }
+    }
+
+    /**
      * The display letter for a porcelain status.
      *
      * @param {string} status - the status letter.
@@ -407,6 +435,7 @@ window.__ModuleLoader__.load({
         statusText,
         relativeAge,
         absoluteDate,
+        commitMessageParts,
         submoduleStateText,
         mainSessionIdOf,
         // Host transport and its failure vocabulary.

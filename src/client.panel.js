@@ -15,11 +15,60 @@ window.__ModuleLoader__.load({
   factory: () => ({ create: (shared) => {
     const {
       h, React, boundTranslate, cx, basename, fill, callHost, failureText, isStaleHost,
-      mainSessionIdOf, GitGlyph, StyleTag, DASH, UP, DOWN, COMMIT_PAGE, NO_FILES,
+      commitMessageParts, mainSessionIdOf, GitGlyph, StyleTag, DASH, UP, DOWN, COMMIT_PAGE, NO_FILES,
       rows: { ContextMenu, Dialog },
       diff: { DiffModal },
       panes: { BranchesColumn, HistoryColumn, CommitColumn },
     } = shared
+
+    /**
+     * Drop the comment lines and rim whitespace from a commit template.
+     *
+     * Git's own cleanup strips `#` lines before the message is stored, but the
+     * panel commits with `-m`, which does not: what the box holds is exactly
+     * what is committed, so the comments come out when the template is filled
+     * in. Whatever survives is what the user sees and can edit.
+     *
+     * @param {unknown} template - the raw template text the Host read.
+     * @returns {string} the usable message text, empty when nothing usable remains.
+     */
+    function stripTemplateComments(template) {
+      if (typeof template !== 'string' || template === '') return ''
+      const kept = template.split(/\r?\n/).filter((line) => line.trimStart().startsWith('#') === false)
+      return kept.join('\n').replace(/^\s+/, '').replace(/\s+$/, '')
+    }
+
+    /**
+     * Turn a `YYYY-MM-DD` date-input value into a UNIX timestamp in seconds.
+     *
+     * The boundary is the local start (or end) of that day: the date input
+     * speaks the user's calendar day, while the commits carry plain seconds.
+     *
+     * @param {unknown} text - the date input value.
+     * @param {boolean} end - whether the day's last second is wanted.
+     * @returns {number|null} the boundary in seconds, or null when the value is not a usable date.
+     */
+    function dayBoundary(text, end) {
+      if (typeof text !== 'string' || /^\d{4}-\d{2}-\d{2}$/.test(text) === false) return null
+      const parsed = new Date(`${text}T${end === true ? '23:59:59' : '00:00:00'}`)
+      return Number.isNaN(parsed.getTime()) ? null : Math.floor(parsed.getTime() / 1000)
+    }
+
+    /**
+     * The local calendar date offset from today by whole days.
+     *
+     * The date inputs speak the user's calendar day, so a quick range is
+     * spelled in the same `YYYY-MM-DD` they display rather than in seconds.
+     *
+     * @param {number} back - whole days before today; 0 is today.
+     * @returns {string} the date in the date input's own format.
+     */
+    function quickRangeDate(back) {
+      const day = new Date()
+      day.setDate(day.getDate() - back)
+      const pad = (value) => String(value).padStart(2, '0')
+      return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
+    }
 
     /**
      * The Git tool: the full-page main panel.
@@ -90,6 +139,13 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = React.useState(null)
       const [branchFilter, setBranchFilter] = React.useState('')
       const [groups, setGroups] = React.useState({ local: true, remote: false, submodules: true })
+      // The history filters narrow the loaded page in the browser: the same
+      // pattern as the branch filter, instant and free, with no round trip.
+      const [historyFilter, setHistoryFilter] = React.useState(() => ({ search: '', author: '', since: '', until: '' }))
+      // The commit template of the repository in force. A ref, not state: the
+      // box is seeded through effects and refilled after a commit, and neither
+      // is a render input of its own.
+      const templateRef = React.useRef('')
 
       /**
        * Whether a load the user should see is in flight.
@@ -249,6 +305,29 @@ window.__ModuleLoader__.load({
           cancelled = true
         }
       }, [repository, workspaceRoot, logToken])
+
+      // The selected repository's commit template, read once per repository
+      // alongside the history: one cheap config probe and at most one small
+      // file. The box is seeded only while it is still empty, so a draft the
+      // user has already typed is never replaced; an older Host half does not
+      // know the operation, and a missing template is a convenience the panel
+      // stays quiet about rather than an error to report.
+      React.useEffect(() => {
+        let cancelled = false
+        templateRef.current = ''
+        if (repository === null) return undefined
+        callHost('commitTemplate', { workspaceRoot, path: repository.path })
+          .then((payload) => {
+            if (cancelled) return
+            const template = stripTemplateComments(payload?.template)
+            templateRef.current = template
+            if (template !== '') setMessage((current) => (current === '' ? template : current))
+          })
+          .catch(() => {})
+        return () => {
+          cancelled = true
+        }
+      }, [repository, workspaceRoot])
 
       // A selection belongs to the repository it was made in — and so does the
       // amend box: a draft and an amend target never cross repositories.
@@ -464,7 +543,10 @@ window.__ModuleLoader__.load({
         const amending = amendMode === true
         const payload = await mutate('commit', { message: text, all, amend: amending }, undefined)
         if (payload === null) return
-        setMessage('')
+        // A plain commit is followed by a fresh template, the way Git's own
+        // editor seeds every new message; a rewritten commit hands back an
+        // empty box instead.
+        setMessage(amending === true ? '' : templateRef.current)
         if (amending) {
           amendDraft.current = ''
           setAmendMode(false)
@@ -496,7 +578,7 @@ window.__ModuleLoader__.load({
         const newest = commits[0]
         if (newest === undefined) return
         amendDraft.current = message
-        setMessage(newest.body === '' ? newest.subject : `${newest.subject}\n\n${newest.body}`)
+        setMessage(commitMessageParts(newest).full)
         setAmendMode(true)
       }
 
@@ -526,13 +608,12 @@ window.__ModuleLoader__.load({
        */
       function commitMessageMenu(commit) {
         const newest = commits[0]?.hash === commit.hash
-        const fullMessage = commit.body === '' ? commit.subject : `${commit.subject}\n\n${commit.body}`
         return [
           {
             label: t('menu.editMessage'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: fullMessage, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: commitMessageParts(commit).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: t('copyHash'), run: () => copyText(commit.hash) },
         ]
@@ -547,7 +628,7 @@ window.__ModuleLoader__.load({
             label: t('amend'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: commit.body === '' ? commit.subject : `${commit.subject}\n\n${commit.body}`, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: commitMessageParts(commit).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: `${t('checkout')} ${commit.short}`, run: () => mutate('checkout', { name: commit.hash }, fill(t('notice.checkedOut'), { name: commit.short })) },
           { label: `${t('cherryPick')} ${commit.short}`, run: () => mutate('cherryPick', { commit: commit.hash }, fill(t('notice.cherryPicked'), { name: commit.short })) },
@@ -674,6 +755,74 @@ window.__ModuleLoader__.load({
       const filteredBranches = branches.filter((entry) => filter === '' || entry.name.toLowerCase().includes(filter))
       const filteredRemotes = remotes.filter((entry) => filter === '' || entry.name.toLowerCase().includes(filter))
 
+      /** Whether any history filter condition is set. */
+      const historyFilterActive = historyFilter.search !== '' || historyFilter.author !== '' || historyFilter.since !== '' || historyFilter.until !== ''
+
+      /**
+       * Clear every history filter at once.
+       *
+       * @returns {undefined} nothing.
+       */
+      function clearHistoryFilter() {
+        setHistoryFilter({ search: '', author: '', since: '', until: '' })
+      }
+
+      /**
+       * The quick time ranges the history filter offers.
+       *
+       * `back` is whole days before today: a range fills the since bound with
+       * that day and leaves the until bound empty, so the window always runs
+       * to now. The labels are read at render time like every other string.
+       */
+      const quickRanges = [
+        { key: 'day', back: 0, label: t('historyFilter.range.day') },
+        { key: 'week', back: 6, label: t('historyFilter.range.week') },
+        { key: 'fortnight', back: 14, label: t('historyFilter.range.fortnight') },
+        { key: 'month', back: 29, label: t('historyFilter.range.month') },
+      ]
+
+      /**
+       * The quick range whose window the current bounds still match.
+       *
+       * Derived, not stored: a hand-edited bound simply stops matching any
+       * range and the select falls back to the custom entry on its own.
+       */
+      const activeRange = historyFilter.until === '' ? quickRanges.find((range) => quickRangeDate(range.back) === historyFilter.since)?.key ?? '' : ''
+
+      /**
+       * Apply one quick time range, or clear both bounds for all time.
+       *
+       * @param {string} key - the selected range key, empty for all time.
+       * @returns {undefined} nothing.
+       */
+      function applyQuickRange(key) {
+        const range = quickRanges.find((entry) => entry.key === key)
+        setHistoryFilter((value) => ({ ...value, since: range === undefined ? '' : quickRangeDate(range.back), until: '' }))
+      }
+
+      /**
+       * The loaded history page narrowed by the filter row.
+       *
+       * All three conditions are local: the search matches the raw message or
+       * the hash, the author matches the author name or e-mail, and the dates
+       * bound the commit's own timestamp. Empty conditions drop out, so a
+       * partially set row filters by what it holds.
+       */
+      const filteredCommits = React.useMemo(() => {
+        const search = historyFilter.search.trim().toLowerCase()
+        const author = historyFilter.author.trim().toLowerCase()
+        const since = dayBoundary(historyFilter.since, false)
+        const until = dayBoundary(historyFilter.until, true)
+        if (search === '' && author === '' && since === null && until === null) return commits
+        return commits.filter((commit) => {
+          if (search !== '' && !(commit.hash.toLowerCase().includes(search) || commitMessageParts(commit).full.toLowerCase().includes(search))) return false
+          if (author !== '' && !(`${commit.author}\n${commit.email}`.toLowerCase().includes(author))) return false
+          if (since !== null && !(Number(commit.timestamp) >= since)) return false
+          if (until !== null && !(Number(commit.timestamp) <= until)) return false
+          return true
+        })
+      }, [commits, historyFilter])
+
       return h(
         'div',
         { className: 'git-panel' },
@@ -799,8 +948,9 @@ window.__ModuleLoader__.load({
                 }),
                 // ---- middle: history ------------------------------------------
                 h(HistoryColumn, {
-                  commitMenu, commits, selectedCommit, setMenu, setSelectedCommit, setSelectedFile,
-                  t,
+                  activeRange, applyQuickRange, clearHistoryFilter, commitMenu, commits, filteredCommits,
+                  historyFilter, historyFilterActive, quickRanges, selectedCommit, setHistoryFilter,
+                  setMenu, setSelectedCommit, setSelectedFile, t,
                 }),
                 // ---- right: the commit message above, its files below ---------
                 h(CommitColumn, {
