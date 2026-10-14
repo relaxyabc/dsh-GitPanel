@@ -15,7 +15,9 @@ window.__ModuleLoader__.load({
   factory: () => ({ create: (shared) => {
     const {
       h, React, boundTranslate, cx, basename, fill, callHost, failureText, isStaleHost,
-      commitMessageParts, mainSessionIdOf, GitGlyph, StyleTag, DASH, UP, DOWN, COMMIT_PAGE, NO_FILES,
+      commitMessageParts, commitTime, mainSessionIdOf, GitGlyph, StyleTag, DASH, UP, DOWN,
+      COMMIT_PAGE, HISTORY_LOAD_CAP, HISTORY_LOAD_STEP, HISTORY_LOAD_AHEAD_PX,
+      HISTORY_FILTER_DEBOUNCE_MS, HISTORY_VIEWPORT_PX, NO_FILES,
       rows: { ContextMenu, Dialog },
       diff: { DiffModal },
       panes: { BranchesColumn, HistoryColumn, CommitColumn },
@@ -63,6 +65,59 @@ window.__ModuleLoader__.load({
      * @param {number} back - whole days before today; 0 is today.
      * @returns {string} the date in the date input's own format.
      */
+    /** A filter with no condition. @returns {{search: string, author: string, since: string, until: string}} the empty filter. */
+    function emptyFilter() {
+      return { search: '', author: '', since: '', until: '' }
+    }
+
+    /**
+     * The query arguments one filter asks the Host for.
+     *
+     * The filter box has always matched a hash as well as message text, and
+     * `--grep` cannot match a hash, so a hash-shaped search travels as a revision
+     * instead: the Host resolves it and answers with that one commit.
+     *
+     * @param {{search: string, author: string, since: string, until: string}} filter - the applied filter.
+     * @returns {object} the `log`/`logCount` arguments, empty for an empty filter.
+     */
+    function logQuery(filter) {
+      const query = {}
+      const search = filter.search.trim()
+      const author = filter.author.trim()
+      if (search !== '') {
+        if (/^[0-9a-f]{4,40}$/i.test(search)) query.ref = search
+        else query.search = search
+      }
+      if (author !== '') query.author = author
+      if (filter.since !== '') query.since = filter.since
+      if (filter.until !== '') query.until = filter.until
+      return query
+    }
+
+    /**
+     * Whether one already-loaded commit satisfies a filter.
+     *
+     * This narrows what the list holds right now, which is what makes typing feel
+     * immediate; the authoritative set is the one the Host returns for the same
+     * conditions once the debounce has passed.
+     *
+     * @param {object} commit - the commit row.
+     * @param {{search: string, author: string, since: string, until: string}} filter - the filter to apply.
+     * @returns {boolean} whether the commit stays.
+     */
+    function matchesFilter(commit, filter) {
+      const search = filter.search.trim().toLowerCase()
+      const author = filter.author.trim().toLowerCase()
+      const since = dayBoundary(filter.since, false)
+      const until = dayBoundary(filter.until, true)
+      if (search !== '' && !(commit.hash.toLowerCase().includes(search) || commitMessageParts(commit).full.toLowerCase().includes(search))) return false
+      if (author !== '' && !(`${commit.author}\n${commit.email}`.toLowerCase().includes(author))) return false
+      const time = commitTime(commit)
+      if (since !== null && !(time >= since)) return false
+      if (until !== null && !(time <= until)) return false
+      return true
+    }
+
     function quickRangeDate(back) {
       const day = new Date()
       day.setDate(day.getDate() - back)
@@ -129,6 +184,17 @@ window.__ModuleLoader__.load({
       const [logLoading, setLogLoading] = React.useState(false)
       const [logHasMore, setLogHasMore] = React.useState(false)
       const [logLoadingMore, setLogLoadingMore] = React.useState(false)
+      // The number of commits the applied filter matches, until the Host has
+      // counted them; null means "not counted", not "none".
+      const [logTotal, setLogTotal] = React.useState(null)
+      const [logAutoLoading, setLogAutoLoading] = React.useState(false)
+      const [logCap, setLogCap] = React.useState(HISTORY_LOAD_CAP)
+      // The raw message of the selected commit, read on selection because the
+      // history page carries only the subject and body.
+      const [selectedMessage, setSelectedMessage] = React.useState(null)
+      // A Host that predates the filter arguments answers unfiltered pages, so
+      // the panel falls back to narrowing what it has and says so.
+      const [staleFilter, setStaleFilter] = React.useState(false)
       const [reposToken, setReposToken] = React.useState(0)
       const [stateToken, setStateToken] = React.useState(0)
       const [logToken, setLogToken] = React.useState(0)
@@ -141,20 +207,50 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = React.useState(null)
       const [branchFilter, setBranchFilter] = React.useState('')
       const [groups, setGroups] = React.useState({ local: true, remote: false, submodules: true })
-      // The history filters narrow the loaded page in the browser: the same
-      // pattern as the branch filter, instant and free, with no round trip.
-      const [historyFilter, setHistoryFilter] = React.useState(() => ({ search: '', author: '', since: '', until: '' }))
+      // The history filter has two halves: the draft the inputs bind to, and the
+      // query the Host was asked. The draft narrows what is already loaded while
+      // the debounce runs, so typing keeps reacting without one history walk per
+      // keystroke; the query is what the pages and the count are read for.
+      const [historyFilter, setHistoryFilter] = React.useState(emptyFilter)
+      const [logFilter, setLogFilter] = React.useState(emptyFilter)
+      // The window of history rows the list renders. The panel owns it because
+      // the scroll that moves it is also the scroll that reads the next page.
+      const [historyViewport, setHistoryViewport] = React.useState({ top: 0, height: HISTORY_VIEWPORT_PX })
       // The commit template of the repository in force. A ref, not state: the
       // box is seeded through effects and refilled after a commit, and neither
       // is a render input of its own.
       const templateRef = React.useRef('')
+      // The loaded history, readable synchronously: the page loader and the
+      // "load all" loop both need the count of rows loaded *now*, and the
+      // `commits` a render closed over goes stale inside that loop.
+      const commitsRef = React.useRef([])
+      // The raw message of the newest commit, for the amend box. A ref: the box
+      // reads it on a click, and reading it is not a render of its own.
+      const newestMessageRef = React.useRef(null)
       // The identity of the history read in hand. Every fresh read bumps it, so
-      // a page that arrives after a refresh or a repository switch is dropped
-      // instead of being appended to a list it does not belong to.
+      // a page that arrives after a refresh, a repository switch or a filter
+      // change is dropped instead of being appended to a list it does not belong
+      // to.
       const logRequestRef = React.useRef(0)
       // A scroll fires in bursts, and the state alone would let a second page
       // start before the re-render that disables the button.
       const logLoadingMoreRef = React.useRef(false)
+      // The running "load all" loop: whether it is running, whether the user
+      // asked it to stop, and the ceiling it works against.
+      const logAutoLoadingRef = React.useRef(false)
+      const logStopRef = React.useRef(false)
+      const logCapRef = React.useRef(HISTORY_LOAD_CAP)
+
+      /**
+       * Replace the loaded history and keep its synchronous mirror in step.
+       *
+       * @param {Array<object>|Function} next - the rows, or an updater over them.
+       * @returns {undefined} nothing.
+       */
+      const putCommits = React.useCallback((next) => {
+        commitsRef.current = typeof next === 'function' ? next(commitsRef.current) : next
+        setCommits(commitsRef.current)
+      }, [])
 
       /**
        * Whether a load the user should see is in flight.
@@ -290,23 +386,38 @@ window.__ModuleLoader__.load({
       }, [repository, workspaceRoot, stateToken])
 
       // The selected repository's history, read apart from the state so a
-      // working-tree toggle never re-reads a page of commits.
+      // working-tree toggle never re-reads a page of commits. The applied filter
+      // belongs to this effect's identity: a filter change is a different
+      // history, so it reloads from its newest match and the generation it bumps
+      // drops whatever the previous filter still had in flight.
       React.useEffect(() => {
         let cancelled = false
         logRequestRef.current += 1
+        // A fresh history starts at the first ceiling, whatever the previous one
+        // had been raised to.
+        logCapRef.current = HISTORY_LOAD_CAP
+        setLogCap(HISTORY_LOAD_CAP)
         if (repository === null) {
-          setCommits([])
+          putCommits([])
           setLogHasMore(false)
+          setLogTotal(null)
           setLogLoading(false)
           return undefined
         }
+        const query = logQuery(logFilter)
         setLogLoading(true)
         setError(null)
-        callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE })
+        callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE, ...query })
           .then((payload) => {
             if (cancelled) return
-            setCommits(Array.isArray(payload.commits) ? payload.commits : [])
+            const page = Array.isArray(payload.commits) ? payload.commits : []
+            putCommits(page)
             setLogHasMore(payload.hasMore === true)
+            // A Host that predates the filter arguments ignores them, which shows
+            // up as a page carrying commits the filter would have excluded: the
+            // panel then falls back to narrowing what it has and says so.
+            if (Object.keys(query).length > 0 && page.some((commit) => matchesFilter(commit, logFilter) === false)) setStaleFilter(true)
+            else setStaleFilter(false)
           })
           .catch((failure) => {
             if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
@@ -314,45 +425,130 @@ window.__ModuleLoader__.load({
           .finally(() => {
             if (!cancelled) setLogLoading(false)
           })
+        // The count is read alongside the first page: the header shows how much
+        // of a matching history is loaded, and the loader needs to know when it
+        // has reached the end. A Host that cannot answer leaves it unknown.
+        callHost('logCount', { workspaceRoot, path: repository.path, ...query })
+          .then((payload) => {
+            if (!cancelled) setLogTotal(Number.isFinite(payload?.total) ? payload.total : null)
+          })
+          .catch(() => {
+            if (!cancelled) setLogTotal(null)
+          })
         return () => {
           cancelled = true
         }
-      }, [repository, workspaceRoot, logToken])
+      }, [repository, workspaceRoot, logToken, logFilter, putCommits])
+
+      // A filter draft becomes the query once the user stops typing. Every
+      // applied filter costs the Host a walk of the matching history, so the
+      // debounce is what keeps a six-letter search from spending six of them.
+      React.useEffect(() => {
+        const timer = window.setTimeout(() => setLogFilter(historyFilter), HISTORY_FILTER_DEBOUNCE_MS)
+        return () => window.clearTimeout(timer)
+      }, [historyFilter])
 
       /**
        * Read the next page of the selected repository's history.
        *
        * The page continues after the commits already loaded, and is dropped when
-       * a refresh or a repository switch happened meanwhile: the read generation
-       * is what keeps two histories from being concatenated into one list. Rows
-       * are de-duplicated by hash for a history that moved between the reads.
+       * a refresh, a repository switch or a filter change happened meanwhile: the
+       * read generation is what keeps two histories from being concatenated into
+       * one list. Rows are de-duplicated by hash for a history that moved between
+       * the reads.
        *
-       * @returns {Promise<void>} resolves when the read settles.
+       * @returns {Promise<{appended: number, hasMore: boolean}|null>} the page that landed, or null when nothing was read.
        */
       const loadMoreCommits = React.useCallback(() => {
-        if (repository === null || logHasMore !== true || logLoadingMoreRef.current === true) return Promise.resolve()
+        if (repository === null || logHasMore !== true || logLoadingMoreRef.current === true) return Promise.resolve(null)
         const generation = logRequestRef.current
-        const skip = commits.length
+        const skip = commitsRef.current.length
         logLoadingMoreRef.current = true
         setLogLoadingMore(true)
-        return callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE, skip })
+        return callHost('log', { workspaceRoot, path: repository.path, limit: COMMIT_PAGE, skip, ...logQuery(logFilter) })
           .then((payload) => {
-            if (generation !== logRequestRef.current) return
+            if (generation !== logRequestRef.current) return null
             const page = Array.isArray(payload.commits) ? payload.commits : []
-            setCommits((current) => {
+            putCommits((current) => {
               const seen = new Set(current.map((entry) => entry.hash))
               return current.concat(page.filter((entry) => seen.has(entry.hash) === false))
             })
             setLogHasMore(payload.hasMore === true)
+            return { appended: page.length, hasMore: payload.hasMore === true }
           })
           .catch((failure) => {
             if (generation === logRequestRef.current) setError(failure instanceof Error ? failure.message : String(failure))
+            return null
           })
           .finally(() => {
             logLoadingMoreRef.current = false
             setLogLoadingMore(false)
           })
-      }, [commits.length, logHasMore, repository, workspaceRoot])
+      }, [logFilter, logHasMore, putCommits, repository, workspaceRoot])
+
+      /**
+       * Read the rest of the matching history in the background.
+       *
+       * One page at a time, sequentially: the Host walks the matching history for
+       * every page it answers, so a burst of parallel requests would only make it
+       * walk the same commits several times. The loop ends at the ceiling the
+       * panel keeps loaded, when the history runs out, when the user stops it, or
+       * when the read it is on top of no longer belongs to the list in force.
+       *
+       * @returns {Promise<void>} resolves when the loop ends.
+       */
+      const loadAllCommits = React.useCallback(async () => {
+        if (repository === null || logAutoLoadingRef.current === true) return
+        const generation = logRequestRef.current
+        const cap = logCapRef.current
+        logAutoLoadingRef.current = true
+        logStopRef.current = false
+        setLogAutoLoading(true)
+        try {
+          while (generation === logRequestRef.current && logStopRef.current === false && commitsRef.current.length < cap) {
+            const page = await loadMoreCommits()
+            if (page === null || page.appended === 0 || page.hasMore !== true) break
+          }
+        } finally {
+          logAutoLoadingRef.current = false
+          setLogAutoLoading(false)
+        }
+      }, [loadMoreCommits, repository])
+
+      /**
+       * Ask a running drain to stop after the page it is reading.
+       *
+       * @returns {undefined} nothing.
+       */
+      const stopLoadingAll = React.useCallback(() => {
+        logStopRef.current = true
+      }, [])
+
+      /**
+       * Raise the loaded-history ceiling one step and keep loading.
+       *
+       * @returns {undefined} nothing.
+       */
+      const raiseLoadCap = React.useCallback(() => {
+        logCapRef.current += HISTORY_LOAD_STEP
+        setLogCap(logCapRef.current)
+        loadAllCommits()
+      }, [loadAllCommits])
+
+      /**
+       * Follow one history scroll.
+       *
+       * A scroll does two jobs: it moves the window of rendered rows, and near the
+       * end of what is loaded it reads the next page, so the history keeps going
+       * without a control to hunt for.
+       *
+       * @param {object} element - the history list that scrolled.
+       * @returns {undefined} nothing.
+       */
+      const onHistoryScroll = React.useCallback((element) => {
+        setHistoryViewport({ top: element.scrollTop, height: element.clientHeight })
+        if (element.scrollHeight - element.scrollTop - element.clientHeight <= HISTORY_LOAD_AHEAD_PX) loadMoreCommits()
+      }, [loadMoreCommits])
 
       // The selected repository's commit template, read once per repository
       // alongside the history: one cheap config probe and at most one small
@@ -420,6 +616,62 @@ window.__ModuleLoader__.load({
           cancelled = true
         }
       }, [selectedCommit, repository, workspaceRoot])
+
+      /** The hash of the newest loaded commit: the only one the amend box edits. */
+      const newestHash = commits[0]?.hash ?? null
+
+      /**
+       * The raw message of the selected commit.
+       *
+       * The history page carries the subject and the body only, so the one commit
+       * the detail column shows is the one whose whole message is read. The text
+       * is kept with the hash it belongs to: a selection that moves on before the
+       * read lands must not show the previous commit's message.
+       */
+      React.useEffect(() => {
+        let cancelled = false
+        if (selectedCommit === null || repository === null) {
+          setSelectedMessage(null)
+          return undefined
+        }
+        callHost('commitMessage', { workspaceRoot, path: repository.path, commit: selectedCommit.hash })
+          .then((payload) => {
+            if (cancelled) return
+            setSelectedMessage(typeof payload?.message === 'string' ? { hash: selectedCommit.hash, message: payload.message } : null)
+          })
+          .catch((failure) => {
+            if (cancelled) return
+            setSelectedMessage(null)
+            // An older Host does not know the operation; the subject and body the
+            // page carries are then all the detail column can show.
+            if (isStaleHost(failure)) setStaleHost(true)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [selectedCommit, repository, workspaceRoot])
+
+      /**
+       * The raw message of the newest commit, for the amend box.
+       *
+       * The box is filled synchronously when the toggle or a menu row is used, so
+       * the read happens as soon as there is a newest commit to amend. Keyed by
+       * the hash rather than the list, because appending a page must not re-read
+       * a message that has not changed.
+       */
+      React.useEffect(() => {
+        let cancelled = false
+        newestMessageRef.current = null
+        if (newestHash === null || repository === null) return undefined
+        callHost('commitMessage', { workspaceRoot, path: repository.path, commit: newestHash })
+          .then((payload) => {
+            if (!cancelled && typeof payload?.message === 'string') newestMessageRef.current = payload.message
+          })
+          .catch(() => {})
+        return () => {
+          cancelled = true
+        }
+      }, [newestHash, repository, workspaceRoot])
 
       React.useEffect(() => {
         if (notice === null) return undefined
@@ -626,7 +878,9 @@ window.__ModuleLoader__.load({
         const newest = commits[0]
         if (newest === undefined) return
         amendDraft.current = message
-        setMessage(commitMessageParts(newest).full)
+        // The newest commit's raw message is read as soon as it becomes the
+        // newest; a Host that cannot answer leaves the subject and body.
+        setMessage(commitMessageParts({ ...newest, message: newestMessageRef.current ?? undefined }).full)
         setAmendMode(true)
       }
 
@@ -661,7 +915,7 @@ window.__ModuleLoader__.load({
             label: t('menu.editMessage'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: commitMessageParts(commit).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: commitMessageParts({ ...commit, message: newestMessageRef.current ?? undefined }).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: t('copyHash'), run: () => copyText(commit.hash) },
         ]
@@ -676,7 +930,7 @@ window.__ModuleLoader__.load({
             label: t('amend'),
             disabled: !newest,
             title: newest ? undefined : t('amend.newestOnly'),
-            run: () => setDialog({ title: t('amend'), input: commitMessageParts(commit).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
+            run: () => setDialog({ title: t('amend'), input: commitMessageParts({ ...commit, message: newestMessageRef.current ?? undefined }).full, multiline: true, confirm: t('amend'), run: (value) => mutate('amend', { message: value }, t('notice.amended')) }),
           },
           { label: `${t('checkout')} ${commit.short}`, run: () => mutate('checkout', { name: commit.hash }, fill(t('notice.checkedOut'), { name: commit.short })) },
           { label: `${t('cherryPick')} ${commit.short}`, run: () => mutate('cherryPick', { commit: commit.hash }, fill(t('notice.cherryPicked'), { name: commit.short })) },
@@ -849,27 +1103,29 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * The loaded history page narrowed by the filter row.
+       * The loaded history narrowed by the filter draft.
        *
-       * All three conditions are local: the search matches the raw message or
-       * the hash, the author matches the author name or e-mail, and the dates
-       * bound the commit's own timestamp. Empty conditions drop out, so a
-       * partially set row filters by what it holds.
+       * The authoritative filtered set is the one the Host returns for the same
+       * conditions; this narrows what is already loaded so the list reacts while
+       * the debounce to that query is still running. When the draft and the
+       * applied filter agree — the steady state — this is the identity on the
+       * pages the Host sent, and the two can never disagree about a row.
        */
       const filteredCommits = React.useMemo(() => {
-        const search = historyFilter.search.trim().toLowerCase()
-        const author = historyFilter.author.trim().toLowerCase()
-        const since = dayBoundary(historyFilter.since, false)
-        const until = dayBoundary(historyFilter.until, true)
-        if (search === '' && author === '' && since === null && until === null) return commits
-        return commits.filter((commit) => {
-          if (search !== '' && !(commit.hash.toLowerCase().includes(search) || commitMessageParts(commit).full.toLowerCase().includes(search))) return false
-          if (author !== '' && !(`${commit.author}\n${commit.email}`.toLowerCase().includes(author))) return false
-          if (since !== null && !(Number(commit.timestamp) >= since)) return false
-          if (until !== null && !(Number(commit.timestamp) <= until)) return false
-          return true
-        })
+        const active = historyFilter.search !== '' || historyFilter.author !== '' || historyFilter.since !== '' || historyFilter.until !== ''
+        return active === false ? commits : commits.filter((commit) => matchesFilter(commit, historyFilter))
       }, [commits, historyFilter])
+
+      /**
+       * The selected commit with its raw message, once the Host has answered.
+       *
+       * The detail column reads the whole message through `commitMessageParts`,
+       * which falls back to the subject and body the page carries, so this only
+       * has to attach the text when it belongs to the commit in hand.
+       */
+      const detailCommit = selectedCommit !== null && selectedMessage !== null && selectedMessage.hash === selectedCommit.hash
+        ? { ...selectedCommit, message: selectedMessage.message }
+        : selectedCommit
 
       return h(
         'div',
@@ -996,15 +1252,18 @@ window.__ModuleLoader__.load({
                 }),
                 // ---- middle: history ------------------------------------------
                 h(HistoryColumn, {
-                  activeRange, applyQuickRange, clearHistoryFilter, commitMenu, commits, filteredCommits,
-                  historyFilter, historyFilterActive, loadMore: loadMoreCommits, loadingMore: logLoadingMore,
-                  more: logHasMore, quickRanges, selectedCommit, setHistoryFilter,
-                  setMenu, setSelectedCommit, setSelectedFile, t,
+                  activeRange, applyQuickRange, autoLoading: logAutoLoading,
+                  capped: logHasMore === true && commits.length >= logCap, clearHistoryFilter, commitMenu,
+                  commits, filteredCommits, historyFilter, historyFilterActive, loadMore: loadMoreCommits,
+                  loadingMore: logLoadingMore, more: logHasMore, onLoadAll: loadAllCommits,
+                  onRaiseCap: raiseLoadCap, onScroll: onHistoryScroll, onStopLoad: stopLoadingAll,
+                  quickRanges, selectedCommit, setHistoryFilter, setMenu, setSelectedCommit,
+                  setSelectedFile, staleFilter, t, total: logTotal, viewport: historyViewport,
                 }),
                 // ---- right: the commit message above, its files below ---------
                 h(CommitColumn, {
-                  commitFiles, commitMessageMenu, filesError, filesLoading, openDiff, selectedCommit,
-                  selectedFile, setMenu, setSelectedFile, t,
+                  commitFiles, commitMessageMenu, filesError, filesLoading, openDiff,
+                  selectedCommit: detailCommit, selectedFile, setMenu, setSelectedFile, t,
                 }),
               ),
         menu === null ? null : h(ContextMenu, { menu, onClose: closeMenu }),

@@ -247,7 +247,10 @@ let timers = []
  * @returns {Promise<void>} nothing once quiet.
  */
 async function drain() {
-  for (let round = 0; round < 60; round += 1) {
+  // The bound has to cover a background drain of the history ceiling, which
+  // reads a hundred pages one after another; the loop still returns as soon as
+  // nothing is queued and nothing is in flight.
+  for (let round = 0; round < 5000; round += 1) {
     await Promise.resolve()
     while (pending.size > 0) await Promise.all([...pending])
     const queued = timers
@@ -337,8 +340,69 @@ let serverTemplate = ''
 /** The operation the fake Host's repository is stopped inside, if any. */
 let serverInProgress = null
 
-/** Whether the fake Host reports that older commits remain unread. */
-let serverLogHasMore = false
+/**
+ * The commits the fake Host's history holds, newest first.
+ *
+ * The paging section rewrites this list, because reaching a ceiling takes more
+ * pages than the two fixtures every other section selects and inspects by name.
+ */
+let serverHistory = [
+  {
+    hash: 'a'.repeat(40),
+    short: 'aaaaaaaa',
+    author: 'Ada Lovelace',
+    email: 'ada@example.com',
+    // The author date and the commit date differ on purpose: the panel shows and
+    // filters the commit date, which is what Git's own date limiters read.
+    timestamp: 1690000000,
+    committedAt: 1700000000,
+    // A second parent the page does not carry: the row draws a merge stub for
+    // it, the way any truncated history page looks.
+    parents: ['b'.repeat(40), 'e'.repeat(40)],
+    refs: ['HEAD -> main'],
+    subject: 'feat: greet the world',
+    body: 'A longer explanation\nof the change.',
+    // The raw message a current Host half answers with on demand: it keeps the
+    // newlines the folded %s subject cannot.
+    message: 'feat: greet the world\n\nA longer explanation\nof the change.',
+    // A Host build that predates `commitFiles` reports the file stats here.
+    files: [
+      { added: 3, removed: 1, path: 'src/index.ts' },
+      { added: null, removed: null, path: 'assets/logo.png' },
+    ],
+  },
+  // A message with no blank line after its first line: Git folds that first
+  // paragraph into the subject, and only the raw message keeps the break.
+  { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, committedAt: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '', message: 'chore: scaffold\nfollowed by a note' },
+]
+
+/** Whether the fake Host ignores filter arguments, the way a build that predates them does. */
+let serverIgnoresFilters = false
+
+/**
+ * The fake Host's answer for one filtered history.
+ *
+ * The same conditions the panel sends, applied the way Git's limiters would:
+ * `ref` resolves a hash, the rest narrow the list.
+ *
+ * @param {object} args - the request arguments.
+ * @returns {Array<object>} the matching commits, newest first.
+ */
+function matchingHistory(args) {
+  if (serverIgnoresFilters === true) return serverHistory
+  if (typeof args?.ref === 'string' && args.ref !== '') return serverHistory.filter((commit) => commit.hash.startsWith(args.ref.toLowerCase()))
+  const since = typeof args?.since === 'string' && args.since !== '' ? Math.floor(new Date(`${args.since}T00:00:00`).getTime() / 1000) : null
+  const until = typeof args?.until === 'string' && args.until !== '' ? Math.floor(new Date(`${args.until}T23:59:59`).getTime() / 1000) : null
+  const author = typeof args?.author === 'string' ? args.author.toLowerCase() : ''
+  const search = typeof args?.search === 'string' ? args.search.toLowerCase() : ''
+  return serverHistory.filter((commit) => {
+    if (since !== null && !(commit.committedAt >= since)) return false
+    if (until !== null && !(commit.committedAt <= until)) return false
+    if (author !== '' && !(`${commit.author}\n${commit.email}`.toLowerCase().includes(author))) return false
+    if (search !== '' && !(`${commit.subject}\n${commit.body}`.toLowerCase().includes(search))) return false
+    return true
+  })
+}
 
 /** Whether the fake Host answers like a build that predates the newest operations. */
 let staleHost = false
@@ -394,48 +458,18 @@ function answerFor(request) {
     }
   }
   if (request.op === 'log') {
-    // A continuation answers with the older commit the skip asked to continue
-    // from; the first page reports whether such a page exists at all.
-    if (Number.isInteger(request.args?.skip) && request.args.skip > 0) {
-      return {
-        commits: [
-          // The timestamp is yesterday on purpose: the history row names such
-          // a day instead of spelling the full date.
-          { hash: 'c'.repeat(40), short: 'cccccccc', author: 'Cleo', email: 'cleo@example.com', timestamp: Math.floor(Date.now() / 1000) - 86400, parents: ['b'.repeat(40)], refs: [], subject: 'docs: older note', body: '', message: 'docs: older note' },
-        ],
-        hasMore: false,
-      }
-    }
-    return {
-      commits: [
-        {
-          hash: 'a'.repeat(40),
-          short: 'aaaaaaaa',
-          author: 'Ada Lovelace',
-          email: 'ada@example.com',
-          timestamp: 1700000000,
-          // A second parent the page does not carry: the row draws a merge
-          // stub for it, the way any truncated history page looks.
-          parents: ['b'.repeat(40), 'e'.repeat(40)],
-          refs: ['HEAD -> main'],
-          subject: 'feat: greet the world',
-          body: 'A longer explanation\nof the change.',
-          // The raw message only a current Host half reports: it keeps the
-          // newlines the folded %s subject cannot.
-          message: 'feat: greet the world\n\nA longer explanation\nof the change.',
-          // A Host build that predates `commitFiles` reports the file stats here.
-          files: [
-            { added: 3, removed: 1, path: 'src/index.ts' },
-            { added: null, removed: null, path: 'assets/logo.png' },
-          ],
-        },
-        // A message with no blank line after its first line: Git folds that
-        // first paragraph into the subject, and only the raw message keeps
-        // the break.
-        { hash: 'b'.repeat(40), short: 'bbbbbbbb', author: 'Bob', email: 'bob@example.com', timestamp: 1690000000, parents: [], refs: [], subject: 'chore: scaffold', body: '', message: 'chore: scaffold\nfollowed by a note' },
-      ],
-      hasMore: serverLogHasMore,
-    }
+    const matching = matchingHistory(request.args)
+    const skip = Number.isInteger(request.args?.skip) ? Math.max(request.args.skip, 0) : 0
+    const limit = Number.isInteger(request.args?.limit) ? request.args.limit : 30
+    const page = matching.slice(skip, skip + limit)
+    return { commits: page, hasMore: skip + page.length < matching.length }
+  }
+  if (request.op === 'logCount') {
+    return { total: matchingHistory(request.args).length }
+  }
+  if (request.op === 'commitMessage') {
+    const commit = serverHistory.find((entry) => entry.hash === request.args?.commit)
+    return { message: commit === undefined ? '' : commit.message }
   }
   if (request.op === 'commitFiles') {
     return {
@@ -1345,7 +1379,17 @@ searchInput?.props?.onChange?.({ target: { value: 'scaffold' } })
 view = await settle(view)
 let historyText = view.text()
 check(historyText.includes('chore: scaffold') && !historyText.includes('feat: greet the world'), 'the message filter keeps only the matching commits', historyText.slice(-8))
-check(historyText.includes('1/2'), 'the pane head counts the narrowed list', historyText.slice(-8))
+check(historyText.includes('1/1'), 'the pane head counts the loaded rows against the matching history', historyText.slice(-8))
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.search === 'scaffold'),
+  'a message filter is a query the Host is asked, not a pass over the loaded page',
+  requests.map((entry) => entry.args),
+)
+check(
+  requests.some((entry) => entry.op === 'logCount' && entry.args?.search === 'scaffold'),
+  'the count is measured for the same query',
+  requests.map((entry) => entry.op),
+)
 searchInput?.props?.onChange?.({ target: { value: 'bbbbbbbb' } })
 view = await settle(view)
 historyText = view.text()
@@ -1364,6 +1408,11 @@ dateInputs[0]?.props?.onChange?.({ target: { value: '2023-08-01' } })
 view = await settle(view)
 historyText = view.text()
 check(historyText.includes('feat: greet the world') && !historyText.includes('chore: scaffold'), 'the since bound keeps the newer commit', historyText.slice(-8))
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.since === '2023-08-01'),
+  'the date bound travels to the Host as part of the query',
+  requests.filter((entry) => entry.op === 'log').map((entry) => entry.args),
+)
 dateInputs[1]?.props?.onChange?.({ target: { value: '2023-08-01' } })
 dateInputs[0]?.props?.onChange?.({ target: { value: '' } })
 view = await settle(view)
@@ -1441,6 +1490,11 @@ check(details.some((entry) => entry.includes('A longer explanation')), 'the comm
 check(
   requests.some((entry) => entry.op === 'commitFiles' && entry.args?.commit === 'a'.repeat(40)),
   'selecting a commit reads only that commit file list',
+  requests.map((entry) => entry.op),
+)
+check(
+  requests.some((entry) => entry.op === 'commitMessage' && entry.args?.commit === 'a'.repeat(40)),
+  'selecting a commit reads the raw message the page no longer carries',
   requests.map((entry) => entry.op),
 )
 check(details.includes('assets/logo.png'), 'the commit file list renders')
@@ -1654,65 +1708,153 @@ check(
 )
 
 console.log('\nhistory paging')
-serverLogHasMore = true
+// The history the paging assertions run against: the two named commits, the graph
+// section's third row, and enough commits behind them to need three pages.
+const namedHistory = serverHistory
+const olderCommit = {
+  hash: 'c'.repeat(40),
+  short: 'cccccccc',
+  author: 'Cleo',
+  email: 'cleo@example.com',
+  // Yesterday, so the row names the day instead of spelling the full date.
+  timestamp: Math.floor(Date.now() / 1000) - 86400,
+  committedAt: Math.floor(Date.now() / 1000) - 86400,
+  parents: ['b'.repeat(40)],
+  refs: [],
+  subject: 'docs: older note',
+  body: '',
+  message: 'docs: older note',
+}
+/**
+ * A generated history with the named fixtures at its head.
+ * @param {number} length - how many generated commits to append.
+ * @returns {Array<object>} the commits, newest first.
+ */
+const generatedHistory = (length) => [
+  namedHistory[0],
+  namedHistory[1],
+  olderCommit,
+  ...Array.from({ length }, (_, index) => ({
+    hash: `f${String(index).padStart(6, '0')}${ '0'.repeat(33)}`.slice(0, 40),
+    short: `f${String(index).padStart(7, '0')}`,
+    author: 'Gen',
+    email: 'gen@example.com',
+    timestamp: 1600000000 - index,
+    committedAt: 1600000000 - index,
+    parents: [],
+    refs: [],
+    subject: `chore: generated ${index}`,
+    body: '',
+    message: `chore: generated ${index}`,
+  })),
+]
+/**
+ * The history rows the list actually rendered.
+ * @param {object} tree - the render tree.
+ * @returns {Array<object>} the row elements.
+ */
+const renderedRows = (tree) => {
+  const list = find(tree, (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function')
+  return list === undefined
+    ? []
+    : findAll(list, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onClick === 'function')
+}
+/**
+ * The history list's own scroll element.
+ * @param {object} tree - the render tree.
+ * @returns {object|undefined} the list element.
+ */
+const historyScroller = (tree) => find(tree, (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function')
+/**
+ * Let a background drain run until the loaded count stops moving.
+ *
+ * The harness settles one page per pass, so a drain of a hundred pages needs
+ * several settles; this waits for the header to repeat itself.
+ * @param {object} current - the render to settle.
+ * @returns {Promise<object>} the render the drain left behind.
+ */
+const settleDrain = async (current) => {
+  let render = current
+  for (let round = 0; round < 40; round += 1) {
+    const counter = (view) => view.text().find((entry) => /^\d+\/\d+$/.test(entry)) ?? ''
+    const before = counter(render)
+    render = await settle(render)
+    if (counter(render) === before) return render
+  }
+  return render
+}
+
+serverHistory = generatedHistory(447)
 view = await withServerState(view)
 let pagedText = view.text()
-check(pagedText.includes('2+'), 'a page that is not the last is counted with a trailing plus', pagedText.filter((entry) => entry.includes('+')))
-const historyList = find(
-  view.tree,
-  (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function',
-)
-check(historyList !== undefined, 'the history list is a scroll target for the next page')
+check(pagedText.includes('200/450'), 'the header counts the loaded rows against the matching history', pagedText.filter((entry) => entry.includes('/')))
+check(historyScroller(view.tree) !== undefined, 'the history list is a scroll target for the next page')
 const pagingStyle = find(view.tree, (element) => element.type === 'style')
 const pagingCss = Array.isArray(pagingStyle?.children) ? pagingStyle.children.flat().join('') : ''
 check(
-  pagingCss.includes('.git-panel-list-more{'),
-  'the paging row carries the styles its own class needs',
-  pagingCss.slice(pagingCss.indexOf('.git-panel-list-more'), pagingCss.indexOf('.git-panel-list-more') + 40),
+  pagingCss.includes('.git-panel-list-more{') && pagingCss.includes('.git-panel-list-pad{'),
+  'the paging row and the window spacers carry the styles their own classes need',
+  pagingCss.slice(pagingCss.indexOf('.git-panel-list-more'), pagingCss.indexOf('.git-panel-list-more') + 60),
 )
 
-// The scroll path: reaching the end of the loaded page reads the next one.
-requests.length = 0
-historyList?.props?.onScroll?.({ currentTarget: { scrollHeight: 100, scrollTop: 90, clientHeight: 20 } })
+// The window: a loaded page of 200 commits renders the rows in view, and the
+// spacer below stands in for the rest so the scrollbar keeps its meaning.
+const firstWindow = renderedRows(view.tree)
+check(firstWindow.length > 0 && firstWindow.length < 60, 'the list renders a window of rows rather than the whole page', firstWindow.length)
+const firstPads = findAll(view.tree, (element) => element.props?.className === 'git-panel-list-pad')
+check(firstPads.length === 1 && firstPads[0]?.props?.style?.height > 0, 'the rows below the window are carried by a spacer', firstPads.map((element) => element.props?.style))
+historyScroller(view.tree)?.props?.onScroll?.({ currentTarget: { scrollTop: 520, clientHeight: 640, scrollHeight: 11700 } })
 view = await settle(view)
+const movedWindow = renderedRows(view.tree)
+const movedPads = findAll(view.tree, (element) => element.props?.className === 'git-panel-list-pad')
 check(
-  requests.some((entry) => entry.op === 'log' && entry.args?.skip === 2),
-  'scrolling to the end reads the page after the commits already loaded',
-  requests.map((entry) => entry.args),
+  movedPads.length === 2 && movedPads[0]?.props?.style?.height > 0 && movedPads[1]?.props?.style?.height > 0,
+  'scrolling moves the window between two spacers',
+  movedPads.map((element) => element.props?.style),
 )
-pagedText = view.text()
-check(pagedText.includes('docs: older note'), 'the next page appends its commits', pagedText.slice(-8))
-check(pagedText.includes('feat: greet the world') && pagedText.includes('chore: scaffold'), 'appending a page keeps the commits already loaded', pagedText.slice(-10))
-check(!pagedText.includes('Load more'), 'a list that reached the end of the history offers no further page')
+check(movedWindow.length > 0 && collectText(movedWindow[0]).join(' ') !== collectText(firstWindow[0]).join(' '), 'scrolling changes which rows are rendered')
 
-// The button path: the same read for a list too short to scroll.
-serverLogHasMore = true
-view = await withServerState(view)
-const loadMoreButton = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Load more')
-check(loadMoreButton !== undefined, 'the history offers reading the next page', view.text().slice(-8))
+// Reaching the end of the loaded rows reads the next page.
 requests.length = 0
-loadMoreButton?.props?.onClick?.()
+historyScroller(view.tree)?.props?.onScroll?.({ currentTarget: { scrollTop: 0, clientHeight: 640, scrollHeight: 640 } })
 view = await settle(view)
+check(requests.some((entry) => entry.op === 'log' && entry.args?.skip === 200), 'scrolling to the end reads the page after the loaded one', requests.map((entry) => entry.args))
+check(view.text().includes('400/450'), 'the header follows the loaded rows', view.text().filter((entry) => entry.includes('/')))
+
+// Load all drains the rest in the background.
+requests.length = 0
+const loadAllButton = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Load all')
+check(loadAllButton !== undefined, 'the history offers loading the rest in one action', view.text().slice(-8))
+loadAllButton?.props?.onClick?.()
+view = await settle(view)
+check(view.text().includes('450/450'), 'the drain reads the matching history to its end', view.text().filter((entry) => entry.includes('/')))
+check(!view.text().includes('Load all') && !view.text().includes('Keep loading'), 'a fully loaded history offers no further page')
 check(
-  requests.some((entry) => entry.op === 'log' && entry.args?.skip === 2),
-  'the button reads the page after the commits already loaded',
-  requests.map((entry) => entry.args),
+  requests.filter((entry) => entry.op === 'log').map((entry) => entry.args?.skip).join(',') === '400',
+  'the drain reads only what the page had not read yet',
+  requests.filter((entry) => entry.op === 'log').map((entry) => entry.args),
 )
-serverLogHasMore = false
+
+// A history past the ceiling stops there and says so, rather than growing the
+// tab without bound.
+console.log('\nhistory ceiling')
+serverHistory = generatedHistory(19998)
 view = await withServerState(view)
-check(!view.text().includes('Load more'), 'a last page offers no further page')
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Load all')?.props?.onClick?.()
+view = await settleDrain(view)
+check(view.text().includes('20000/20001'), 'the drain stops at the ceiling instead of reading the rest', view.text().filter((entry) => entry.includes('/')))
+const keepLoading = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Keep loading')
+check(keepLoading !== undefined, 'a history past the ceiling offers to keep loading', view.text().slice(-10))
+keepLoading?.props?.onClick?.()
+view = await settleDrain(view)
+check(view.text().includes('20001/20001'), 'raising the ceiling reads the remaining commits', view.text().filter((entry) => entry.includes('/')))
 
 console.log('\nhistory graph')
-// Load the continuation page so the graph covers the whole fixture: A merges
-// into B and a parent the page does not carry, B ends its lane, C continues it.
-serverLogHasMore = true
+// The three-row fixture the graph assertions are written against: A merges into
+// B and a parent the page does not carry, B ends its lane, C continues it.
+serverHistory = [namedHistory[0], namedHistory[1], olderCommit]
 view = await withServerState(view)
-find(
-  view.tree,
-  (element) => element.props?.className === 'git-panel-list' && typeof element.props?.onScroll === 'function',
-)?.props?.onScroll?.({ currentTarget: { scrollHeight: 100, scrollTop: 90, clientHeight: 20 } })
-view = await settle(view)
-check(view.text().includes('docs: older note'), 'the graph section reads the whole paged fixture', view.text().slice(-8))
+check(view.text().includes('docs: older note'), 'the graph section reads the whole fixture', view.text().slice(-8))
 const graphCells = findAll(view.tree, (element) => element.type === 'svg' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-graph'))
 check(graphCells.length === 3, 'every commit row draws its slice of the graph', graphCells.length)
 /**
@@ -1755,8 +1897,22 @@ check(
   'the lanes and dots carry their palette rules',
   graphCss.slice(graphCss.indexOf('.git-panel-graph-l0'), graphCss.indexOf('.git-panel-graph-l0') + 60),
 )
-serverLogHasMore = false
+// A Host that predates the filter arguments answers unfiltered pages, so the
+// panel narrows what it has and says so instead of pretending the query ran.
+console.log('\nfilter fallback on an older Host')
+serverHistory = namedHistory
+serverIgnoresFilters = true
 view = await withServerState(view)
+const fallbackSearch = find(view.tree, (element) => element.props?.placeholder === 'Filter by message or hash')
+fallbackSearch?.props?.onChange?.({ target: { value: 'no such text anywhere' } })
+view = await settle(view)
+check(view.text().some((entry) => entry.includes('predates query filters')), 'a Host that ignores filter arguments is named as such', view.text().slice(-10))
+check(view.text().some((entry) => entry.includes('No commit matches the filters')), 'the fallback still narrows what is loaded', view.text().slice(-8))
+fallbackSearch?.props?.onChange?.({ target: { value: '' } })
+view = await settle(view)
+serverIgnoresFilters = false
+view = await withServerState(view)
+check(!view.text().some((entry) => entry.includes('predates query filters')), 'a Host that answers the query carries no warning')
 
 console.log('\ncommit box')
 const boxView = await render(GitPanel, {

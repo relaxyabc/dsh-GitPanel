@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
   id: 'GitPanel',
   chunk: 'client.rows.js',
   factory: () => ({ create: (shared) => {
-    const { h, React, boundTranslate, cx, basename, statusText, relativeDate, commitMessageParts, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
+    const { h, React, boundTranslate, cx, basename, statusText, relativeDate, commitTime, commitMessageParts, HISTORY_ROW_HEIGHT, ARROW, BRANCH_GLYPH, CARET_OPEN, CARET_CLOSED, ENTER_GLYPH } = shared
 
     /** Horizontal distance between two graph lanes, in pixels. */
     const GRAPH_GAP = 11
@@ -297,6 +297,9 @@ window.__ModuleLoader__.load({
         'div',
         {
           className: cx('git-panel-row', selected ? 'git-panel-row-sel' : false),
+          // The windowed list adds up the rows it is *not* rendering, so a row
+          // has to be exactly as tall as the shared constant says it is.
+          style: { height: HISTORY_ROW_HEIGHT },
           title: `${commit.short} — ${subject || t('noMessage')}`,
           onClick: () => onSelect(commit),
           onContextMenu: (event) => {
@@ -306,7 +309,7 @@ window.__ModuleLoader__.load({
           },
         },
         h('span', { className: 'git-panel-row-author' }, commit.author || 'unknown'),
-        h('span', { className: 'git-panel-row-date' }, relativeDate(commit.timestamp, t)),
+        h('span', { className: 'git-panel-row-date' }, relativeDate(commitTime(commit), t)),
         h(CommitGraph, { graph, columns }),
         h(
           'span',

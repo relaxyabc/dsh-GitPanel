@@ -53,6 +53,42 @@ window.__ModuleLoader__.load({
      */
     const HISTORY_LOAD_AHEAD_PX = 240
 
+    /**
+     * How many commits the panel keeps loaded before it asks to continue.
+     *
+     * A loaded history lives in the tab's memory, so it has a ceiling the way a
+     * desktop index does not. The ceiling is a step rather than a wall: reaching
+     * it offers to raise it, and `HISTORY_LOAD_STEP` is how much one raise buys.
+     */
+    const HISTORY_LOAD_CAP = 20000
+
+    /** Commits one "keep loading" adds to the ceiling. */
+    const HISTORY_LOAD_STEP = 20000
+
+    /**
+     * The height of one history row, in pixels.
+     *
+     * The list renders a window of rows instead of all of them, which needs the
+     * height of the rows it is not rendering. The stylesheet pins the same
+     * number on the row, so both sides read it from here.
+     */
+    const HISTORY_ROW_HEIGHT = 26
+
+    /** Rows rendered beyond the viewport on each side, to cover a fast scroll. */
+    const HISTORY_WINDOW_OVERSCAN = 8
+
+    /** Viewport height assumed for the first paint, before any scroll arrives. */
+    const HISTORY_VIEWPORT_PX = 640
+
+    /**
+     * Quiet time before a filter draft becomes the query the Host is asked.
+     *
+     * Every applied filter costs the Host a history walk, so typing must not
+     * spend one per keystroke; the draft is also narrowed locally meanwhile, so
+     * the list still reacts immediately.
+     */
+    const HISTORY_FILTER_DEBOUNCE_MS = 300
+
     /** Most side-by-side diff rows one modal renders before it truncates. */
     const MAX_DIFF_ROWS = 3000
 
@@ -301,6 +337,33 @@ window.__ModuleLoader__.load({
      * @param {(key: string) => string} t - the translator for the day names.
      * @returns {string} the formatted date, or an empty string.
      */
+    /**
+     * The date a commit is shown and filtered by.
+     *
+     * Git's `--since`/`--until` limit on the commit date, so the panel shows
+     * that date too: filtering a list by one date while printing another would
+     * make a correct filter look wrong. A Host that predates the field reports
+     * only the author date, which is what this falls back to.
+     *
+     * @param {object|null} commit - the commit record.
+     * @returns {number} seconds since the epoch, or 0 when neither date is usable.
+     */
+    function commitTime(commit) {
+      const committed = Number(commit?.committedAt)
+      if (Number.isFinite(committed) && committed > 0) return committed
+      const authored = Number(commit?.timestamp)
+      return Number.isFinite(authored) ? authored : 0
+    }
+
+    /**
+     * Format a commit timestamp the way a history row reads it: today and
+     * yesterday carry their name plus the clock time, everything older falls
+     * back to the absolute local date.
+     *
+     * @param {number} seconds - commit timestamp.
+     * @param {(key: string) => string} t - the translator for the day names.
+     * @returns {string} the formatted date, or an empty string.
+     */
     function relativeDate(seconds, t) {
       if (!Number.isFinite(seconds) || seconds <= 0) return ''
       const date = new Date(seconds * 1000)
@@ -459,6 +522,7 @@ window.__ModuleLoader__.load({
         relativeDate,
         absoluteDate,
         commitMessageParts,
+        commitTime,
         submoduleStateText,
         mainSessionIdOf,
         // Host transport and its failure vocabulary.
@@ -481,6 +545,12 @@ window.__ModuleLoader__.load({
         MAX_DIFF_ROWS,
         COMMIT_PAGE,
         HISTORY_LOAD_AHEAD_PX,
+        HISTORY_LOAD_CAP,
+        HISTORY_LOAD_STEP,
+        HISTORY_ROW_HEIGHT,
+        HISTORY_WINDOW_OVERSCAN,
+        HISTORY_VIEWPORT_PX,
+        HISTORY_FILTER_DEBOUNCE_MS,
         NO_FILES,
         PANEL_ID,
         RESOURCE_PREFIX,

@@ -52,6 +52,9 @@ window.__ModuleLoader__.load({
       '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
       '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
+      // The two spacers a windowed history list keeps around the rows it renders;
+      // their heights are the rows it is not rendering, set from HISTORY_ROW_HEIGHT.
+      '.git-panel-list-pad{flex:none}',
       '.git-panel-list-more{display:flex;align-items:center;justify-content:center;padding:6px 0 2px}',
       '.git-panel-empty{padding:8px 10px;color:var(--dsw-alias-label-secondary,#57606a)}',
       // The history filter row sits between the pane head and the list and

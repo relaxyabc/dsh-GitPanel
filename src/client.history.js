@@ -11,7 +11,11 @@ window.__ModuleLoader__.load({
   id: 'GitPanel',
   chunk: 'client.history.js',
   factory: () => ({ create: (shared) => {
-    const { h, React, cx, absoluteDate, commitMessageParts, DOT_GLYPH, DASH, HISTORY_LOAD_AHEAD_PX, rows: { CommitRow } } = shared
+    const {
+      h, React, cx, absoluteDate, commitTime, commitMessageParts, fill, DOT_GLYPH, DASH,
+      HISTORY_ROW_HEIGHT, HISTORY_WINDOW_OVERSCAN,
+      rows: { CommitRow },
+    } = shared
 
     /**
      * The right column: the commit message box, then the selected commit's files.
@@ -63,7 +67,7 @@ window.__ModuleLoader__.load({
                       h('div', { className: 'git-panel-kv-key' }, t('author')),
                       h('div', { className: 'git-panel-kv-value' }, `${selectedCommit.author} <${selectedCommit.email}>`),
                       h('div', { className: 'git-panel-kv-key' }, t('date')),
-                      h('div', { className: 'git-panel-kv-value' }, absoluteDate(selectedCommit.timestamp)),
+                      h('div', { className: 'git-panel-kv-value' }, absoluteDate(commitTime(selectedCommit))),
                       h('div', { className: 'git-panel-kv-key' }, t('parents')),
                       h('div', { className: cx('git-panel-kv-value', 'git-panel-mono') }, selectedCommit.parents.map((parent) => parent.slice(0, 8)).join(' ') || DASH),
                     ),
@@ -205,14 +209,52 @@ window.__ModuleLoader__.load({
      */
     function HistoryColumn(props) {
       const {
-        activeRange, applyQuickRange, clearHistoryFilter, commitMenu, commits, filteredCommits,
-        historyFilter, historyFilterActive, loadMore, loadingMore, more, quickRanges, selectedCommit,
-        setHistoryFilter, setMenu, setSelectedCommit, setSelectedFile, t,
+        activeRange, applyQuickRange, autoLoading, capped, clearHistoryFilter, commitMenu, commits,
+        filteredCommits, historyFilter, historyFilterActive, loadMore, loadingMore, more, onLoadAll,
+        onRaiseCap, onScroll, onStopLoad, quickRanges, selectedCommit, setHistoryFilter, setMenu,
+        setSelectedCommit, setSelectedFile, staleFilter, t, total, viewport,
       } = props
       const narrowed = filteredCommits.length !== commits.length
-      // A trailing `+` marks a page that is not the whole history: the count is
-      // what is loaded, not what the repository holds.
-      const count = narrowed === true ? `${filteredCommits.length}/${commits.length}` : String(commits.length)
+      // The count follows what the header can promise: the narrowed pair while a
+      // filter draft is ahead of the query, the loaded-of-total pair once the
+      // Host has counted the matching history, and a trailing `+` while nothing
+      // has counted it yet.
+      const count = narrowed === true
+        ? `${filteredCommits.length}/${commits.length}`
+        : total === null
+          ? `${commits.length}${more === true ? '+' : ''}`
+          : `${commits.length}/${total}`
+      // Which rows are rendered. The window itself is the panel's state — the
+      // scroll that moves it also reads the next page — so this stays a pure
+      // function of it; the pads around the window stand in for the rows that are
+      // not rendered, so the scrollbar keeps describing the whole loaded history.
+      const first = Math.max(0, Math.floor(viewport.top / HISTORY_ROW_HEIGHT) - HISTORY_WINDOW_OVERSCAN)
+      const last = Math.min(filteredCommits.length, Math.ceil((viewport.top + viewport.height) / HISTORY_ROW_HEIGHT) + HISTORY_WINDOW_OVERSCAN)
+      const visible = filteredCommits.slice(first, last)
+      const status = autoLoading === true
+        ? h(
+            'div',
+            { className: 'git-panel-list-more' },
+            h('span', { className: 'git-panel-count' }, t('history.loadingAll')),
+            h('button', { type: 'button', className: 'git-panel-btn', onClick: onStopLoad }, t('history.stopLoad')),
+          )
+        : loadingMore === true
+          ? h('div', { className: 'git-panel-list-more' }, h('span', { className: 'git-panel-count' }, t('history.loadingMore')))
+          : capped === true
+            ? h(
+                'div',
+                { className: 'git-panel-list-more' },
+                h('span', { className: 'git-panel-count' }, fill(t('history.capped'), { loaded: commits.length, total: total === null ? '?' : total })),
+                h('button', { type: 'button', className: 'git-panel-btn', onClick: onRaiseCap }, t('history.continueLoad')),
+              )
+            : more === true
+              ? h(
+                  'div',
+                  { className: 'git-panel-list-more' },
+                  h('button', { type: 'button', className: 'git-panel-btn', title: t('history.loadMore'), onClick: loadMore }, t('history.loadMore')),
+                  h('button', { type: 'button', className: 'git-panel-btn', title: t('history.loadAll'), onClick: onLoadAll }, t('history.loadAll')),
+                )
+              : null
       const graph = React.useMemo(() => commitGraphRows(filteredCommits), [filteredCommits])
       return (
         h(
@@ -222,12 +264,13 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'git-panel-pane-head' },
             h('span', { className: 'git-panel-pane-title' }, t('commits')),
-            h('span', { className: 'git-panel-count' }, more === true ? `${count}+` : count),
+            h('span', { className: 'git-panel-count' }, count),
             historyFilterActive === true ? h('button', { type: 'button', className: 'git-panel-btn', title: t('historyFilter.clear'), onClick: clearHistoryFilter }, t('historyFilter.clear')) : null,
           ),
           h(
             'div',
-            { className: 'git-panel-filters' },
+            { className: 'git-panel-filters', title: t('historyFilter.scope') },
+            staleFilter === true ? h('div', { className: 'git-panel-count' }, t('historyFilter.staleHost')) : null,
             h(
               'div',
               { className: 'git-panel-filters-row' },
@@ -283,21 +326,26 @@ window.__ModuleLoader__.load({
             'div',
             {
               className: 'git-panel-list',
-              // Scrolling near the end reads the next page, so the history keeps
-              // going past one page without a control to hunt for.
-              onScroll: (event) => {
-                const element = event.currentTarget
-                if (element.scrollHeight - element.scrollTop - element.clientHeight <= HISTORY_LOAD_AHEAD_PX) loadMore()
-              },
+              // The panel owns what a scroll does — it moves the window of
+              // rendered rows and, near the end, reads the next page.
+              onScroll: (event) => onScroll(event.currentTarget),
             },
-            commits.length === 0 ? h('div', { className: 'git-panel-empty' }, t('noCommits')) : null,
+            // An empty list means one of two things, and they read differently:
+            // a filtered history that matches nothing is a filter result, while
+            // an unfiltered one that is empty is a repository with no commits.
+            commits.length === 0
+              ? h('div', { className: 'git-panel-empty' }, t(historyFilterActive === true ? 'history.noMatch' : 'noCommits'))
+              : null,
             commits.length !== 0 && filteredCommits.length === 0 ? h('div', { className: 'git-panel-empty' }, t('history.noMatch')) : null,
-            filteredCommits.map((commit, index) =>
+            first > 0 ? h('div', { className: 'git-panel-list-pad', style: { height: first * HISTORY_ROW_HEIGHT } }) : null,
+            visible.map((commit, index) =>
               h(CommitRow, {
                 t,
                 key: commit.hash,
                 commit,
-                graph: graph.rows[index] ?? null,
+                // The graph is laid out over the whole filtered list, so the row's
+                // draw data is at its absolute position, not its window index.
+                graph: graph.rows[first + index] ?? null,
                 columns: graph.columns,
                 selected: selectedCommit?.hash === commit.hash,
                 onSelect: (entry) => {
@@ -307,17 +355,10 @@ window.__ModuleLoader__.load({
                 onContextMenu: (event, entry) => setMenu({ x: event.clientX, y: event.clientY, title: `${entry.short} ${entry.subject}`, items: commitMenu(entry) }),
               }),
             ),
+            last < filteredCommits.length ? h('div', { className: 'git-panel-list-pad', style: { height: (filteredCommits.length - last) * HISTORY_ROW_HEIGHT } }) : null,
             // The list may end before the repository does: this row says so, and
-            // reads the next page either on scroll or on a click.
-            more === true || loadingMore === true
-              ? h(
-                  'div',
-                  { className: 'git-panel-list-more' },
-                  loadingMore === true
-                    ? h('span', { className: 'git-panel-count' }, t('history.loadingMore'))
-                    : h('button', { type: 'button', className: 'git-panel-btn', title: t('history.loadMore'), onClick: loadMore }, t('history.loadMore')),
-                )
-              : null,
+            // reads the next page on a click, in one step or all the way.
+            status,
           ),
         )
       )
