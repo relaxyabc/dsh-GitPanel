@@ -340,6 +340,9 @@ let serverTemplate = ''
 /** The operation the fake Host's repository is stopped inside, if any. */
 let serverInProgress = null
 
+/** Extra working-tree rows the fake Host answers with, for sections that need a shape the default fixture does not carry. */
+let serverExtraFiles = []
+
 /**
  * The commits the fake Host's history holds, newest first.
  *
@@ -411,7 +414,7 @@ function matchingHistory(args) {
 let staleHost = false
 
 /** The operations a Host build without the newest additions does not know. */
-const NEWER_OPERATIONS = ['commitFiles', 'commitTemplate', 'discoveryDepth']
+const NEWER_OPERATIONS = ['commitFiles', 'commitTemplate', 'discoveryDepth', 'deleteFile', 'revealFile']
 
 /**
  * Answer one Host operation.
@@ -457,6 +460,7 @@ function answerFor(request) {
         { path: 'src/index.ts', from: null, status: 'M', added: 4, removed: 2, binary: false, staged: false, untracked: false },
         { path: 'docs/old.md', from: 'docs/new.md', status: 'R', added: 0, removed: 0, binary: false, staged: true, untracked: false },
         { path: 'fresh.txt', from: null, status: '?', added: 0, removed: 0, binary: false, staged: false, untracked: true },
+        ...serverExtraFiles,
       ],
     }
   }
@@ -761,6 +765,13 @@ check(
   localeState.ns?.dicts?.zh?.['menu.rebase'] === 'Rebase {name} onto this branch' && localeState.ns?.dicts?.zh?.['menu.merge'] === 'Merge into {name}',
   'the merge and rebase menu entries keep their verbs in both languages',
   { merge: localeState.ns?.dicts?.zh?.['menu.merge'], rebase: localeState.ns?.dicts?.zh?.['menu.rebase'] },
+)
+check(
+  localeState.ns?.dicts?.en?.['menu.deleteFile'] === 'Delete file' &&
+    localeState.ns?.dicts?.zh?.['menu.deleteFile'] === '删除文件' &&
+    localeState.ns?.dicts?.zh?.['menu.revealFile'] === '使用文件资源管理器打开',
+  'the working-tree file menu entries are registered in both languages',
+  { en: localeState.ns?.dicts?.en?.['menu.deleteFile'], zh: localeState.ns?.dicts?.zh?.['menu.deleteFile'] },
 )
 check(
   localeState.ns?.dicts?.zh?.['amend'] === '修改提交信息' && localeState.ns?.dicts?.zh?.['menu.editMessage'] === '修改提交信息',
@@ -1613,6 +1624,133 @@ check(changeRow !== undefined, 'a changed path carries a context menu')
 changeRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
 view = await settle(view)
 check(view.text().includes('Show the diff'), 'the changed-path menu offers the diff', view.text().slice(-24))
+check(view.text().includes('Reveal in File Explorer'), 'the changed-path menu offers the file manager', view.text().slice(-24))
+const deleteMenuItem = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')
+check(deleteMenuItem !== undefined, 'the changed-path menu offers deleting the file')
+deleteMenuItem?.props?.onClick?.()
+view = await settle(view)
+const deleteDialogText = view.text().join('\n')
+check(deleteDialogText.includes('fresh.txt'), 'the delete dialog names the file', deleteDialogText.slice(-40))
+check(deleteDialogText.includes('uncommitted changes'), 'the delete dialog warns about uncommitted changes', deleteDialogText.slice(-40))
+const deleteConfirm = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')
+check(deleteConfirm !== undefined, 'the delete dialog offers its confirm')
+requests.length = 0
+deleteConfirm?.props?.onClick?.()
+view = await settle(view)
+const deleteRequest = requests.find((entry) => entry.op === 'deleteFile')
+check(deleteRequest?.args?.file === 'fresh.txt', 'confirming deletes that working-tree file', deleteRequest?.args)
+check(deleteRequest?.args?.path === `${WORKSPACE}/app`, 'the deletion targets the selected repository', deleteRequest?.args)
+check(requests.some((entry) => entry.op === 'state'), 'the working tree is re-read after the deletion', requests.map((entry) => entry.op))
+check(find(view.tree, (element) => element.type === 'div' && element.props?.className === 'git-panel-dialog') === undefined, 'the delete dialog is gone once the delete ran')
+
+console.log('\nworking-tree reveal menu')
+requests.length = 0
+const revealRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fresh.txt'),
+)
+check(revealRow !== undefined, 'the changed-path row is still reachable after the delete flow')
+revealRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Reveal in File Explorer')?.props?.onClick?.()
+await settle(view)
+const revealRequest = requests.find((entry) => entry.op === 'revealFile')
+check(revealRequest?.args?.file === 'fresh.txt', 'revealing asks the Host to open the file manager', revealRequest?.args)
+check(revealRequest?.args?.path === `${WORKSPACE}/app`, 'the reveal targets the selected repository', revealRequest?.args)
+check(!requests.some((entry) => entry.op === 'state'), 'revealing re-reads nothing — nothing could have changed', requests.map((entry) => entry.op))
+
+console.log('\nfile actions on an older Host')
+// A running Host half predates the process that serves the page only until the
+// process restarts, so the new file actions meet "unknown operation" there. The
+// panel reports that state through its stale-Host banner instead of the raw
+// refusal the user could do nothing with.
+staleHost = true
+const staleFileActionsRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fresh.txt'),
+)
+staleFileActionsRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Reveal in File Explorer')?.props?.onClick?.()
+view = await settle(view)
+check(
+  view.text().some((entry) => entry.includes('newer than the running Host half')),
+  'a refused reveal names the stale Host instead of the raw refusal',
+  view.text().filter((entry) => entry.includes('Host')),
+)
+check(!view.text().includes('unknown operation'), 'the raw reveal refusal is not shown verbatim', view.text().filter((entry) => entry.includes('unknown')))
+const staleDeleteRow = find(
+  view.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('fresh.txt'),
+)
+staleDeleteRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+view = await settle(view)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')?.props?.onClick?.()
+view = await settle(view)
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')?.props?.onClick?.()
+view = await settle(view)
+check(
+  view.text().some((entry) => entry.includes('newer than the running Host half')),
+  'a refused delete names the stale Host too',
+  view.text().filter((entry) => entry.includes('Host')),
+)
+check(!view.text().includes('unknown operation'), 'the refused delete shows no raw refusal')
+check(
+  find(view.tree, (element) => element.type === 'div' && element.props?.className === 'git-panel-dialog') === undefined,
+  'the stale delete leaves no dialog behind',
+)
+// A later discovery against a current Host clears the banner again.
+staleHost = false
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Refresh')?.props?.onClick?.()
+view = await settle(view)
+check(
+  !view.text().some((entry) => entry.includes('newer than the running Host half')),
+  'a current Host clears the stale banner once rediscovery runs',
+  view.text().filter((entry) => entry.includes('Host')),
+)
+
+console.log('\ndeleted-row menu')
+// A deletion row has no file behind it: reveal and delete would both be refused
+// by the Host, so the menu disables them and says why.
+serverExtraFiles = [{ path: 'gone.md', from: null, status: 'D', added: 0, removed: 0, binary: false, staged: false, untracked: false }]
+const deletedRowView = await render(GitPanel, {
+  useWorkspaces: () => [{ path: WORKSPACE, title: 'project' }],
+  useSessions: (selector) => selector(SESSIONS),
+})
+const goneRow = find(
+  deletedRowView.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('gone.md'),
+)
+check(goneRow !== undefined, 'a deletion row renders in the working tree')
+goneRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+const goneMenuView = await settle(deletedRowView)
+const goneReveal = find(goneMenuView.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Reveal in File Explorer')
+check(goneReveal?.props?.disabled === true, 'revealing is disabled for a row whose file is gone', goneReveal?.props)
+check(goneReveal?.props?.title === 'The file is no longer in the working tree', 'the disabled reveal item says why', goneReveal?.props)
+const goneDelete = find(goneMenuView.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')
+check(goneDelete?.props?.disabled === true && goneDelete?.props?.title === 'The file is no longer in the working tree', 'deleting is disabled for that row with the same reason', goneDelete?.props)
+// A tracked file that still exists keeps both actions, and its dialog says the
+// row will remain as a deletion until the removal is committed.
+const trackedRow = find(
+  deletedRowView.tree,
+  (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-row') && typeof element.props?.onContextMenu === 'function' && collectText(element).includes('index.ts'),
+)
+trackedRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clientY: 40 })
+const trackedMenuView = await settle(deletedRowView)
+check(
+  find(trackedMenuView.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')?.props?.disabled !== true,
+  'the file actions stay enabled for a tracked file on disk',
+)
+find(trackedMenuView.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Delete file')?.props?.onClick?.()
+const trackedDialogView = await settle(trackedMenuView)
+check(
+  collectText(trackedDialogView.tree).join('\n').includes('stays in the list as a deletion'),
+  'the delete dialog of a tracked file explains the deletion row',
+  collectText(trackedDialogView.tree).slice(-4),
+)
+find(trackedDialogView.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Cancel')?.props?.onClick?.()
+serverExtraFiles = []
+await settle(trackedDialogView)
 
 console.log('\nbranch merge and rebase menu')
 requests.length = 0

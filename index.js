@@ -12,17 +12,17 @@
  * `commitMessage`, `commitTemplate`, and `diff`; writes are `stage`,
  * `unstage`, `commit`, `push`, `fetch`, `pull`,
  * `checkout`, `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`,
- * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`, and
- * `submodule`.
+ * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`,
+ * `submodule`, `deleteFile`, and `revealFile`.
  * The plugin Config holds the repository discovery depth and the whole-file diff
  * switch; both are plain fields the Plugins page edits through the Host settings
  * service.
  *
  * @module GitPanel
  */
-import { execFile } from 'node:child_process'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { lstat, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 
 /** Exact Fetch route the browser half posts operations to. */
 const ROUTE_PATH = '/api/local-git'
@@ -1375,6 +1375,125 @@ async function writeSubmodule(repositoryPath, args) {
 }
 
 /**
+ * Resolve one working-tree file argument and require it to be an existing file.
+ *
+ * The repository path has already been fenced against the workspace root; the
+ * file argument is fenced against the repository itself, so a `..`-shaped path
+ * cannot leave either. Directories and everything inside `.git` are refused:
+ * the operation exists for the rows the working-tree list shows, and a deleted
+ * `.git` file or a removed directory is never one of them.
+ *
+ * @param {string} repositoryPath - absolute repository path, already inside the workspace root.
+ * @param {unknown} file - the repository-relative file path.
+ * @returns {Promise<string>} the absolute file path.
+ * @throws {Error} when the path escapes the repository, sits inside `.git`, or names no file.
+ */
+async function requireWorktreeFile(repositoryPath, file) {
+  const name = requireText(file)
+  const target = resolveInside(repositoryPath, name)
+  if (relative(repositoryPath, target).split(/[\\/]/).includes('.git')) {
+    throw new Error('files inside .git are not working-tree files')
+  }
+  const info = await lstat(target).catch(() => null)
+  if (info === null) throw new Error(`the working tree has no such file: ${name}`)
+  if (!info.isFile() && !info.isSymbolicLink()) throw new Error(`not a file in the working tree: ${name}`)
+  return target
+}
+
+/**
+ * Delete one working-tree file from disk.
+ *
+ * `git rm` is deliberately not used: the request comes from the working-tree
+ * list, whose rows are working-tree files, and removing the file is the whole
+ * request — the index is left exactly as it is, and the next state read reports
+ * the deletion the way any other working-tree edit arrives.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<{ deleted: string }>} the deleted file, repository-relative.
+ * @throws {Error} when the file is not an existing working-tree file, or the removal failed.
+ */
+async function writeDeleteFile(repositoryPath, args) {
+  const name = requireText(args.file)
+  const target = await requireWorktreeFile(repositoryPath, name)
+  await rm(target, { force: false })
+  return { deleted: name }
+}
+
+/**
+ * The program and argv that reveal one path in the platform's file manager.
+ *
+ * Windows and macOS can both select the file inside its folder (`explorer
+ * /select,<path>` and `open -R`); the freedesktop opener cannot select, so it
+ * opens the containing directory. Every part travels as its own argv element —
+ * no shell — so a path with spaces or unusual characters stays one argument.
+ * Exported for the e2e, which asserts this argv rather than opening real file
+ * managers on the machine running the tests.
+ *
+ * @param {string} platform - the host machine's `process.platform`.
+ * @param {string} target - the absolute path to reveal.
+ * @returns {[string, string[]]} the program and its argv.
+ */
+export function revealArgv(platform, target) {
+  if (platform === 'win32') return ['explorer', [`/select,${target}`]]
+  if (platform === 'darwin') return ['open', ['-R', target]]
+  return ['xdg-open', [dirname(target)]]
+}
+
+/**
+ * Hand one reveal to the platform's file manager, fire and forget.
+ *
+ * A file manager is a GUI delegation, not a captured subprocess: it outlives
+ * this process, reports nothing worth capturing, and on Windows `explorer.exe`
+ * opens no window at all when it is spawned with inherited stdio handles — the
+ * `/select,` request is handed to the running shell and the child just exits
+ * non-zero. So the child runs detached with no stdio at all, and success is the
+ * moment it has spawned; a program that cannot even start is the only failure.
+ *
+ * @param {string} program - the file-manager executable.
+ * @param {readonly string[]} argv - its arguments.
+ * @returns {Promise<{ ok: boolean, error: string }>} whether the reveal was handed over.
+ */
+function runReveal(program, argv) {
+  return new Promise((settle) => {
+    let settled = false
+    const done = (result) => {
+      if (settled === false) {
+        settled = true
+        settle(result)
+      }
+    }
+    const child = spawn(program, argv, { detached: true, stdio: 'ignore' })
+    child.once('spawn', () => done({ ok: true, error: '' }))
+    child.on('error', (error) => done({ ok: false, error: error.message }))
+    // Detached and unreferenced: the window's own life is the file manager's
+    // business, and the Host neither waits for it nor is kept alive by it.
+    child.unref()
+  })
+}
+
+/**
+ * Reveal one working-tree file in the platform's file manager.
+ *
+ * A write because it opens a window on the host machine, though it touches
+ * neither the repository nor its working tree. The file has to exist: revealing
+ * a path the working tree no longer has would open an empty or erroring shell.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<{ revealed: string }>} the revealed file, repository-relative.
+ * @throws {Error} when the file is not an existing working-tree file, or the spawn failed.
+ */
+async function writeRevealFile(repositoryPath, args) {
+  const name = requireText(args.file)
+  const target = await requireWorktreeFile(repositoryPath, name)
+  const [program, argv] = revealArgv(process.platform, target)
+  const outcome = await runReveal(program, argv)
+  if (!outcome.ok) throw new Error(outcome.error)
+  return { revealed: name }
+}
+
+/**
  * Read one file's unified diff.
  *
  * Three sources, in the order the request names them: a commit's own version of
@@ -1523,7 +1642,7 @@ const READ_OPERATIONS = {
   },
 }
 
-/** Operations that mutate repository state. */
+/** Operations that mutate state — the repository, its working tree, or the host environment. */
 const WRITE_OPERATIONS = {
   /**
    * Stage paths, or every path when none is named.
@@ -1651,6 +1770,20 @@ const WRITE_OPERATIONS = {
    * @returns {Promise<object>} Git's report.
    */
   rebaseContinue: (args) => writeRebaseContinue(resolveInside(args.workspaceRoot, args.path)),
+  /**
+   * Delete one working-tree file from disk.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the deleted file.
+   */
+  deleteFile: (args) => writeDeleteFile(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Reveal one working-tree file in the platform's file manager.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the revealed file.
+   */
+  revealFile: (args) => writeRevealFile(resolveInside(args.workspaceRoot, args.path), args),
 }
 
 /**

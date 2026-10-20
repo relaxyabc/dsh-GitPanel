@@ -739,7 +739,12 @@ window.__ModuleLoader__.load({
             if (success !== undefined) setNotice(success)
             return payload
           } catch (failure) {
-            setError(failure instanceof Error ? failure.message : String(failure))
+            // A Host that predates an operation answers "unknown operation".
+            // That is the stale-host state the orange banner already names —
+            // a restart, not a retype, is what answers it — so it is reported
+            // there instead of as a raw failure of the action at hand.
+            if (isStaleHost(failure)) setStaleHost(true)
+            else setError(failure instanceof Error ? failure.message : String(failure))
             // An optimistic working-tree patch must not survive a refused
             // operation, so a state-scoped mutation re-reads even on failure.
             if (scope === 'state') refreshState()
@@ -901,6 +906,57 @@ window.__ModuleLoader__.load({
         setSelectedFile(entry)
         setDiffOpen(true)
       }, [])
+
+      /**
+       * Delete one working-tree file, after its confirmation dialog.
+       *
+       * The file is removed from disk only: the index is left as it is, and the
+       * next state read reports the deletion the way any other working-tree
+       * edit arrives. A selection and an open diff of the deleted path are
+       * dropped with it, so no stale diff survives the row.
+       *
+       * @param {object} entry - the changed-path row.
+       * @returns {undefined} nothing.
+       */
+      const deleteFile = React.useCallback((entry) => {
+        setDialog({
+          title: t('menu.deleteFile'),
+          text: entry.path,
+          // A tracked file stays in the list as a deletion until the removal is
+          // committed, which reads as "nothing happened" — the dialog says so
+          // before the click, not after.
+          warning: entry.untracked === true ? t('dialog.deleteFile.warning') : `${t('dialog.deleteFile.warning')} ${t('dialog.deleteFile.tracked')}`,
+          confirm: t('menu.deleteFile'),
+          run: async () => {
+            const payload = await mutate('deleteFile', { file: entry.path }, fill(t('notice.deleted'), { name: entry.path }), 'state')
+            if (payload !== null && selectedFile?.path === entry.path) {
+              setSelectedFile(null)
+              setDiffOpen(false)
+            }
+          },
+        })
+      }, [mutate, selectedFile, t])
+
+      /**
+       * Ask the Host to reveal one working-tree file in the OS file manager.
+       *
+       * Nothing can change, so the state re-read `mutate` schedules is skipped
+       * and the call goes out directly; only a refusal is reported.
+       *
+       * @param {object} entry - the changed-path row.
+       * @returns {Promise<void>} nothing.
+       */
+      const revealFile = React.useCallback(async (entry) => {
+        if (repository === null) return
+        try {
+          await callHost('revealFile', { workspaceRoot, path: repository.path, file: entry.path })
+        } catch (failure) {
+          // An older Host does not know the operation; the orange banner names
+          // the restart instead of repeating the raw refusal.
+          if (isStaleHost(failure)) setStaleHost(true)
+          else setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }, [repository, workspaceRoot])
 
       /**
        * Build the context menu for the selected commit's message block.
@@ -1244,8 +1300,8 @@ window.__ModuleLoader__.load({
                 // ---- left: branches, submodules, working tree ------------------
                 h(BranchesColumn, {
                   amendMode, canAmend: commits.length > 0, branchFilter, branchMenu, branches, busy,
-                  commit, copyText, diff, files, filteredBranches, filteredRemotes, groups, message,
-                  mutate, openDiff, pickedPaths, remotes, selectEverything, selectedCommit,
+                  commit, copyText, deleteFile, diff, files, filteredBranches, filteredRemotes, groups, message,
+                  mutate, openDiff, pickedPaths, remotes, revealFile, selectEverything, selectedCommit,
                   selectedFile, selectedPaths, setBranchFilter, setGroups, setMenu, setMessage,
                   setSelectedCommit, setSelectedFile, setSelectedStaged, state, t, toggleAmend,
                   togglePicked,

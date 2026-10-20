@@ -6,10 +6,10 @@
  * exercises every operation through the registered Fetch route.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, Config } from '../index.js'
+import { apply, Config, revealArgv } from '../index.js'
 
 /** Isolated global git config, so the harness never reads the operator's identity. */
 const GIT_CONFIG = join(tmpdir(), `git-panel-e2e-config-${process.pid}`)
@@ -825,6 +825,52 @@ try {
   const seedHash = (await call('log', { workspaceRoot: root, path: 'diffrepo', limit: 1 })).body.data.commits[0].hash
   const wholeCommitDiff = (await call('diff', { workspaceRoot: root, path: 'diffrepo', file: 'long.txt', commit: seedHash, wholeFile: true })).body.data?.diff ?? ''
   check(wholeCommitDiff.includes('+line-1\n') && wholeCommitDiff.includes('+line-40'), 'a whole-file commit diff carries the entire file', wholeCommitDiff.slice(0, 200))
+
+  // ---- working-tree file actions ------------------------------------------------
+  console.log('\nworking-tree file actions')
+  writeFileSync(join(alpha, 'doomed.txt'), 'delete me\n')
+  const deletedUntracked = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: 'doomed.txt' })
+  check(deletedUntracked.body.ok === true, 'deleteFile removes an untracked working-tree file', deletedUntracked.body)
+  check(existsSync(join(alpha, 'doomed.txt')) === false, 'the untracked file is gone from disk')
+  writeFileSync(join(alpha, 'readme.md'), 'locally rewritten\n')
+  const deletedTracked = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: 'readme.md' })
+  check(deletedTracked.body.ok === true, 'deleteFile removes a tracked working-tree file', deletedTracked.body)
+  const afterDeleteState = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
+  check(afterDeleteState.files.some((entry) => entry.path === 'readme.md' && entry.status === 'D'), 'the next state read reports the deletion', afterDeleteState.files)
+  // The fixture stays tidy: readme.md is restored so nothing downstream sees a
+  // deletion this section introduced.
+  git(alpha, ['checkout', '--', 'readme.md'])
+
+  const deleteEscape = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: '../libsource/lib.txt' })
+  check(deleteEscape.body.ok === false, 'deleteFile refuses a file outside the repository', deleteEscape.body)
+  check(existsSync(join(root, 'libsource', 'lib.txt')), 'the refused file still exists')
+  const deleteMissing = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: 'no-such-file.txt' })
+  check(deleteMissing.body.ok === false, 'deleteFile refuses a file the working tree does not have', deleteMissing.body)
+  const deleteDirectory = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: '.' })
+  check(deleteDirectory.body.ok === false, 'deleteFile refuses a directory', deleteDirectory.body)
+  const deleteGitInternal = await call('deleteFile', { workspaceRoot: root, path: 'alpha', file: '.git/config' })
+  check(deleteGitInternal.body.ok === false, 'deleteFile refuses a path inside .git', deleteGitInternal.body)
+  check(existsSync(join(alpha, '.git', 'config')), '.git stays intact')
+  const deleteNoFile = await call('deleteFile', { workspaceRoot: root, path: 'alpha' })
+  check(deleteNoFile.body.ok === false, 'deleteFile without a file is refused', deleteNoFile.body)
+
+  // A real reveal opens a window on the machine running the tests, so the
+  // success path is asserted on the pure argv builder and the route only for
+  // its refusals.
+  const windowsReveal = revealArgv('win32', 'C:\\ws\\a.txt')
+  check(windowsReveal[0] === 'explorer' && windowsReveal[1][0] === '/select,C:\\ws\\a.txt', 'the Windows reveal selects the file in its folder', windowsReveal)
+  const macReveal = revealArgv('darwin', '/ws/a.txt')
+  check(macReveal[0] === 'open' && macReveal[1][0] === '-R' && macReveal[1][1] === '/ws/a.txt', 'the macOS reveal reveals the file', macReveal)
+  const linuxReveal = revealArgv('linux', '/ws/a.txt')
+  check(linuxReveal[0] === 'xdg-open' && linuxReveal[1][0] === '/ws', 'the freedesktop reveal opens the containing directory', linuxReveal)
+  const revealEscape = await call('revealFile', { workspaceRoot: root, path: 'alpha', file: '../libsource/lib.txt' })
+  check(revealEscape.body.ok === false, 'revealFile refuses a file outside the repository', revealEscape.body)
+  const revealMissing = await call('revealFile', { workspaceRoot: root, path: 'alpha', file: 'no-such-file.txt' })
+  check(revealMissing.body.ok === false, 'revealFile refuses a file the working tree does not have', revealMissing.body)
+  const revealDirectory = await call('revealFile', { workspaceRoot: root, path: 'alpha', file: '.' })
+  check(revealDirectory.body.ok === false, 'revealFile refuses a directory', revealDirectory.body)
+  const revealGitInternal = await call('revealFile', { workspaceRoot: root, path: 'alpha', file: '.git/config' })
+  check(revealGitInternal.body.ok === false, 'revealFile refuses a path inside .git', revealGitInternal.body)
 
   // ---- failures ----------------------------------------------------------------
   console.log('\nfailures')

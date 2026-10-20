@@ -21,8 +21,8 @@ window.__ModuleLoader__.load({
      */
     function BranchesColumn(props) {
       const {
-        amendMode, canAmend, branchFilter, branchMenu, branches, busy, commit, copyText, diff, files,
-        filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths, remotes,
+        amendMode, canAmend, branchFilter, branchMenu, branches, busy, commit, copyText, deleteFile, diff, files,
+        filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths, remotes, revealFile,
         selectEverything, selectedCommit, selectedFile, selectedPaths, setBranchFilter, setGroups,
         setMenu, setMessage, setSelectedCommit, setSelectedFile, setSelectedStaged, state, t,
         toggleAmend, togglePicked,
@@ -131,7 +131,11 @@ window.__ModuleLoader__.load({
                     setSelectedCommit(null)
                     openDiff(entry)
                   },
-                  onContextMenu: (event, entry) =>
+                  onContextMenu: (event, entry) => {
+                    // A deletion row has no file behind it anymore: reveal and
+                    // delete would both be refused by the Host, so they are
+                    // disabled in place with the reason on the item.
+                    const fileGone = entry.status === 'D'
                     setMenu({
                       x: event.clientX,
                       y: event.clientY,
@@ -140,9 +144,13 @@ window.__ModuleLoader__.load({
                         entry.staged === true ? { label: t('menu.unstage'), run: () => mutate('unstage', { paths: [entry.path] }, undefined, 'state') } : { label: t('menu.stage'), run: () => mutate('stage', { paths: [entry.path] }, undefined, 'state') },
                         { separator: true },
                         { label: t('menu.showDiff'), run: () => { setSelectedCommit(null); openDiff(entry) } },
+                        { label: t('menu.revealFile'), disabled: fileGone, title: fileGone ? t('menu.fileGone') : undefined, run: () => revealFile(entry) },
+                        { label: t('menu.deleteFile'), disabled: fileGone, title: fileGone ? t('menu.fileGone') : undefined, run: () => deleteFile(entry) },
+                        { separator: true },
                         { label: t('copyHash'), run: () => copyText(entry.path) },
                       ],
-                    }),
+                    })
+                  },
                 }),
               ),
             ),
