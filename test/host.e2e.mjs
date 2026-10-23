@@ -270,10 +270,19 @@ try {
   check(previewString.value?.filePreviewFix === false, 'a boolean string turns the repair off too', previewString)
   const previewBogus = Config['~standard'].validate({ filePreviewFix: 'maybe' })
   check(Array.isArray(previewBogus.issues) && previewBogus.issues.length > 0, 'a non-boolean repair value is refused', previewBogus)
+  check(Config.dict?.mermaidRender?.type === 'boolean', 'the schema carries the Mermaid render switch', Config.dict)
+  check(filled.value?.mermaidRender === true, 'the Mermaid renderer defaults to on', filled)
+  check(Config.dict?.mermaidRender?.meta?.volatile === true, 'the Mermaid switch is editable without re-applying the plugin', Config.dict?.mermaidRender?.meta)
+  const mermaidOff = Config['~standard'].validate({ mermaidRender: false })
+  check(mermaidOff.value?.mermaidRender === false, 'the Mermaid renderer accepts being turned off', mermaidOff)
+  const mermaidString = Config['~standard'].validate({ mermaidRender: 'false' })
+  check(mermaidString.value?.mermaidRender === false, 'a boolean string turns the renderer off too', mermaidString)
+  const mermaidBogus = Config['~standard'].validate({ mermaidRender: 'maybe' })
+  check(Array.isArray(mermaidBogus.issues) && mermaidBogus.issues.length > 0, 'a non-boolean renderer value is refused', mermaidBogus)
   const projected = Config.toJSON()
   check(
-    projected?.refs !== undefined && Object.values(projected.refs).some((node) => node?.dict?.filePreviewFix !== undefined),
-    'the serialized graph carries the repair field for the settings page',
+    projected?.refs !== undefined && Object.values(projected.refs).some((node) => node?.dict?.filePreviewFix !== undefined && node?.dict?.mermaidRender !== undefined),
+    'the serialized graph carries both preview fields for the settings page',
     Object.keys(projected?.refs ?? {}).length,
   )
 

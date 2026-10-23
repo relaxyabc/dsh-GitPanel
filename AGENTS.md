@@ -27,11 +27,12 @@ README 面向使用者,**本文件面向改代码的人**:下面是本仓库刻�
 4. **无 shell**:`git` 一律走 `runGit`(`execFile` + argv 数组);用户可控值只作独立 argv 元素,必要处保留 `--`;禁止拼接命令、禁止开 shell。
 5. **错误即数据**:`runGit` 从不 reject(git 用退出码表达正常答案),`gitOrThrow` 只在要求成功时用;失败一律 200 + `{ ok: false, error }`,400 只给非 JSON 请求体,413 只给超过 `MAX_BODY_BYTES`。
 6. **解析器与 git 输出一一对应**:改 git 参数必须同步改 `parseXxx` 并补 e2e 用例;`parseLog` 用 RS / US 记录分隔,记录内不再按行解析。
-7. **限额与配置护栏**。`MAX_BODY_BYTES`、`GIT_TIMEOUT_MS`、`GIT_MAX_BUFFER`、`MAX_DISCOVERY_DEPTH`、`MAX_REPOSITORIES`、`MAX_DISCOVERY_ENTRIES`、`SKIPPED_DIRECTORIES` 是护栏,上调要在 PR 说明动机;发现不许无上限递归或跟随符号链接。三个配置字段都是 `volatile`,必须**每次调用解引用**,不许在 apply 时缓存:
+7. **限额与配置护栏**。`MAX_BODY_BYTES`、`GIT_TIMEOUT_MS`、`GIT_MAX_BUFFER`、`MAX_DISCOVERY_DEPTH`、`MAX_REPOSITORIES`、`MAX_DISCOVERY_ENTRIES`、`SKIPPED_DIRECTORIES` 是护栏,上调要在 PR 说明动机;发现不许无上限递归或跟随符号链接。四个配置字段都是 `volatile`,必须**每次调用解引用**,不许在 apply 时缓存:
    - `discoveryDepth`(默认 3,夹取到 1–`MAX_DISCOVERY_DEPTH`,后者始终是硬上限)→ `effectiveDepth()`;`wholeFileDiff` → `effectiveWholeFileDiff()`。
    - 配置位是本包自己的:`configForms` + 共享设置表单注册进 `plugins.bundle.config`(包名作 key),不新增写操作、不占官方分组的 `plugins.item`。
    - 卡片按内置设置页画:`section` + `h3` 分组,只用共享 primitives(数值 `SettingsValueField`、开关 `Switch`、覆盖徽标 `Tag`),说明走 `help`(开关行没有对应 primitive 时,自绘披露区要逐条对齐 `.helpButton` / `.help` 数值);不许自绘下拉框或常驻提示行。
    - `filePreviewFix`(默认 `true`)由浏览器半读:Chromium 不把非特殊 scheme 的 authority 当主机(`new URL('dsh-resource://file/x').hostname` 得 `''`),右侧边栏文件预览因此只剩「文件资源服务不可用」。包装**只对 `dsh-resource://` 地址**生效(其余地址、base 解析、非法地址抛错全交回原生),未知状态按开、明确的 `false` 立即还原、dispose 也还原;禁止扩大成「接管所有 URL 解析」,代价(这类地址不是 `instanceof URL`、就地改写不回写整条地址)要留在注释与 README 里。
+   - `mermaidRender`(默认 `true`)由浏览器半读:GitPanel 在文档预览注册表里以 `extension` 优先级注册自己的 Markdown 渲染器(定义 id `GitPanel/markdown-mermaid`,后缀与内置一致,正文就是内置 `MarkdownText` 原语,只有 ` ```mermaid ` 块被换成图)。注册表经 **`ctx.get('documentPreviews')`** 取得,**不许**写进 `inject` 列表——守卫代理读未声明属性会抛错,而旧版没有该服务时声明会让整个插件永久挂起,`get` 只会得到 `undefined` 并跳过本功能;两个槽位注入(`sidebar.right.tab.document` 正文、`sidebar.right.tab.document.actions` 路径行「图/源码」开关)也要 try/catch 守卫,降级只损失本功能,不许损失面板。Mermaid 库从公共 CDN 动态 `import`(jsdelivr → unpkg → esm.sh,`securityLevel: 'strict'`,失败记为 `unavailable` 并回退源码),没有网络就不能渲染是已文档化的代价。DOM 增强必须是**diff 形状**:每次同步先读状态,想写的东西已经写好就什么都不写(它挂在 MutationObserver 后面,否则自己喂自己死循环);来源匹配靠围栏扫描 + 代码块 textContent 精确相等,正文与开关两侧经 chunk 级 `hub` 通信,不经过 props。
     - **相邻缺陷明确不修**:DSH 内置的 pdf.js(pdfjs-dist 6.3.289)直接调用 `Uint8Array.prototype.toHex` / `toBase64`、`Float16Array`、`Math.sumPrecise`、`Map.prototype.getOrInsert`、`RegExp.escape` 这些 2026 年前后才进引擎的 API,旧浏览器上**任何** PDF 渲染(含 Office 文档经 `remote.officeToPdf` 转出的 PDF,即 `.doc` / `.docx` / `.ppt` / `.pptx` 预览)都会在加载时以 `无法显示 PDF:n.toHex is not a function` 失败。补丁得同时落进 pdf 渲染 Worker 自己的 realm(DSH 自建 `new Worker(blobURL, { type: 'module', name: 'dsh-pdf' })`,页面侧改原型够不着)并补齐六个引擎特性,做不成「一个兼容函数」——所以**禁止**在插件里加垫片,只把结论写进 README 排障,解决办法是浏览器版本。
 8. **不做昂贵的投机调用**:新增 `git` 调用前先量固定开销;`git submodule status` 在无子模块的仓库上也整树扫描(约 1 s),只有声明了子模块的仓库才跑;历史列表不带 `--numstat`,单提交文件由 `commitFiles` 承担。同一条纪律也管浏览器半:**筛选必须作为查询参数下推**给 Host(`since` / `until` / `author` / `search` / `ref`),不许用「对已加载集合的后处理」冒充筛选结果;历史列表必须按固定行高**窗口化渲染**,已加载数组必须有显式上限(`HISTORY_LOAD_CAP`,按 `HISTORY_LOAD_STEP` 分档抬高,到档必须提示而不是静默截断);完整提交信息只在选中时才读(`commitMessage`),不许再进列表页。
 9. **浏览器半保持零构建**:`client.js` 必须能被 `new Function(...)` 求值,经 `window.__ModuleLoader__.load({ id, factory })` 注册,React 走 `require('react')`;禁止 `import` / JSX / TypeScript / 打包器指令。多文件只能走**包内分片**:与客户端入口(`exports["./client"]`)同级、名 `client.<名>.js`、自注册 `{ id: 'GitPanel', chunk: '<文件名>', factory }`,入口用 `await require.async('./<文件名>')` 取回(与 Host 半放哪里无关)。
@@ -70,6 +71,7 @@ README 面向使用者,**本文件面向改代码的人**:下面是本仓库刻�
 | 插件页配置卡片 | `src/client.settings.js` |
 | 右侧边栏的门与标题 | `src/client.sidebar.js` |
 | 资源地址修复 | `src/client.preview-fix.js` |
+| Markdown 预览的 Mermaid 渲染与路径行开关 | `src/client.mermaid.js` |
 | 文案(en / zh 成对) | `src/client.i18n.js` |
 | 样式 | `src/client.style.js` |
 | 入口词汇表 / `shared` 接线 / `apply` | `src/client.js` |

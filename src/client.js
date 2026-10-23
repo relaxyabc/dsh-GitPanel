@@ -104,6 +104,9 @@ window.__ModuleLoader__.load({
     /** The file-preview-fix configuration field the Plugins page card edits. */
     const FILE_PREVIEW_FIELD = 'filePreviewFix'
 
+    /** The Mermaid-render configuration field the Plugins page card edits. */
+    const MERMAID_FIELD = 'mermaidRender'
+
     /** Section id of the settings card's discovery group, tying its heading to the region. */
     const DISCOVERY_SECTION_ID = 'GitPanel-settings-discovery'
 
@@ -121,6 +124,9 @@ window.__ModuleLoader__.load({
 
     /** Element id of the file-preview fix's disclosure region, so its button points at it. */
     const FILE_PREVIEW_HELP_ID = 'GitPanel-file-preview-help'
+
+    /** Element id of the Mermaid switch's disclosure region, so its button points at it. */
+    const MERMAID_HELP_ID = 'GitPanel-mermaid-help'
 
     /** The resource address prefix whose host is compared case-insensitively, as the parser does. */
     const RESOURCE_PREFIX = 'dsh-resource://'
@@ -144,6 +150,16 @@ window.__ModuleLoader__.load({
      */
     const FILE_PREVIEW_SPEC = {
       field: FILE_PREVIEW_FIELD,
+      format: (value) => (value === false ? 'false' : 'true'),
+      parse: (text) => (text === '' ? { kind: 'clear' } : text === 'true' ? { kind: 'set', value: true } : text === 'false' ? { kind: 'set', value: false } : undefined),
+    }
+
+    /**
+     * The Mermaid switch's conversion spec, staged exactly like the other two:
+     * draft text in, a real boolean out on save.
+     */
+    const MERMAID_SPEC = {
+      field: MERMAID_FIELD,
       format: (value) => (value === false ? 'false' : 'true'),
       parse: (text) => (text === '' ? { kind: 'clear' } : text === 'true' ? { kind: 'set', value: true } : text === 'false' ? { kind: 'set', value: false } : undefined),
     }
@@ -550,7 +566,9 @@ window.__ModuleLoader__.load({
         NO_FILES,
         PANEL_ID,
         RESOURCE_PREFIX,
-        // The settings vocabulary the card and the repair share.
+        // The settings vocabulary the card, the repair, and the Mermaid
+        // preview share.
+        LOCALE_NS,
         SETTINGS_NS,
         DEPTH_FIELD,
         DEPTH_INPUT_ID,
@@ -563,6 +581,9 @@ window.__ModuleLoader__.load({
         FILE_PREVIEW_SPEC,
         FILE_PREVIEW_HELP_ID,
         FILE_PREVIEW_SECTION_ID,
+        MERMAID_FIELD,
+        MERMAID_SPEC,
+        MERMAID_HELP_ID,
       }
       // The repair is bound and installed before anything else is, because it has
       // to be in force before the page resolves a resource address — the right
@@ -577,7 +598,7 @@ window.__ModuleLoader__.load({
       // Every other chunk is requested here, before a single seat is registered:
       // the panel, the settings card, and the tab door are all handed to the
       // framework in this call, so nothing they render may still be waiting.
-      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, branchesFace, historyFace, panelFace] = await Promise.all([
+      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, branchesFace, historyFace, panelFace, mermaidFace] = await Promise.all([
         require.async('./client.i18n.js'),
         require.async('./client.style.js'),
         require.async('./client.settings.js'),
@@ -587,6 +608,7 @@ window.__ModuleLoader__.load({
         require.async('./client.branches.js'),
         require.async('./client.history.js'),
         require.async('./client.panel.js'),
+        require.async('./client.mermaid.js'),
       ])
       dictionaries = i18n
       STYLES = style.STYLES
@@ -658,6 +680,44 @@ window.__ModuleLoader__.load({
             ),
           'ui-GitPanel: settings card',
         )
+      }
+
+      // The Mermaid preview rides on the document preview's own extension
+      // points — its registry, its body slot, and its toolbar contribution
+      // list — so a deployment without the primitives module or without the
+      // document preview service keeps the built-in Markdown rendering instead
+      // of losing the whole tool with it. The registry arrives through
+      // `ctx.get`, never through the inject list: an undeclared inject parks
+      // the whole plugin on a build that has no such service, while `get`
+      // answers undefined and this feature simply skips. The two slot
+      // injections are guarded because they name slots another entry declares:
+      // a future rename there must cost this feature, not the panel.
+      const mermaid = primitives !== null ? mermaidFace.create(shared) : null
+      const previewRegistry = typeof ctx.get === 'function' ? ctx.get('documentPreviews') : undefined
+      if (mermaid !== null && previewRegistry !== null && typeof previewRegistry?.register === 'function') {
+        ctx.effect(() => mermaid.registerDocumentPreview(previewRegistry), 'ui-GitPanel: mermaid markdown preview')
+        ctx.effect(() => mermaid.watchMermaidConfig(ctx), 'ui-GitPanel: mermaid render switch')
+        ctx.effect(() => {
+          try {
+            return ctx.slots.inject('sidebar.right.tab.document', () =>
+              ctx.slots.register({ name: 'sidebar.right.tab.document', key: mermaid.bodyId, locale: LOCALE_NS }, mermaid.MermaidMarkdownBody),
+            )
+          } catch {
+            return () => {}
+          }
+        }, 'ui-GitPanel: mermaid markdown body')
+        ctx.effect(() => {
+          try {
+            return ctx.slots.inject('sidebar.right.tab.document.actions', () =>
+              ctx.slots.register(
+                { name: 'sidebar.right.tab.document.actions', id: 'git-panel-mermaid-toggle', order: 30, locale: LOCALE_NS },
+                mermaid.MermaidToggleAction,
+              ),
+            )
+          } catch {
+            return () => {}
+          }
+        }, 'ui-GitPanel: mermaid preview toggle')
       }
     }
 

@@ -210,6 +210,22 @@ window.__ModuleLoader__.load({
       '.git-panel-config-help{padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-config-help>p{margin:0}',
       '.git-panel-config-help>p+p{margin-top:8px}',
+      // The Mermaid preview body mirrors the built-in Markdown body's box, and
+      // the figure takes the code block's own slot in the flow, so both read as
+      // one document rather than an injected layer.
+      '.git-panel-markdown{min-width:0;font-family:var(--dsw-font,inherit);white-space:normal;padding:10px 12px}',
+      '.git-panel-mermaid-figure{margin:6px 0;padding:10px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 24%,transparent);border-radius:6px;background:var(--dsw-alias-bg-layer-1,rgba(128,128,128,.05));overflow:auto}',
+      '.git-panel-mermaid-figure>svg{display:block;margin:0 auto;max-width:100%;height:auto}',
+      '.git-panel-mermaid-note{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-mermaid-note[data-tone="error"]{color:var(--dsw-alias-status-danger,#cf222e)}',
+      // The path-row toggle is a two-segment control sized to the toolbar it
+      // joins: compact height, shared border, and the active side marked by the
+      // brand tint rather than a second border.
+      '.git-panel-mermaid-toggle{display:inline-flex;flex:none;align-items:stretch;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);border-radius:5px;overflow:hidden}',
+      '.git-panel-mermaid-toggle button{border:0;background:transparent;color:var(--dsw-alias-label-secondary,#57606a);padding:2px 8px;font:inherit;font-size:11px;line-height:1.6;cursor:pointer;white-space:nowrap}',
+      '.git-panel-mermaid-toggle button+button{border-left:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 24%,transparent)}',
+      '.git-panel-mermaid-toggle button[aria-pressed="true"]{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da);font-weight:600}',
+      '.git-panel-mermaid-toggle button:focus-visible{outline:none;background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.1))}',
     ].join('\n'),
 
     GIT_PATH:

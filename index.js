@@ -14,9 +14,9 @@
  * `checkout`, `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`,
  * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`,
  * `submodule`, `deleteFile`, and `revealFile`.
- * The plugin Config holds the repository discovery depth and the whole-file diff
- * switch; both are plain fields the Plugins page edits through the Host settings
- * service.
+ * The plugin Config holds the repository discovery depth, the whole-file diff
+ * switch, and the two preview switches; all are plain fields the Plugins page
+ * edits through the Host settings service.
  *
  * @module GitPanel
  */
@@ -2005,8 +2005,29 @@ const FILE_PREVIEW_FIX_NODE = makeSchemaNode({
 })
 
 /**
+ * The `mermaidRender` field: editable live, applied by the browser half's
+ * Markdown document renderer.
+ *
+ * The default is on because the feature is the point of the renderer: a user
+ * who never opens the Plugins page still gets the diagrams their Markdown
+ * already describes, and the path-row toggle switches one preview back to the
+ * source without touching this setting.
+ */
+const MERMAID_RENDER_NODE = makeSchemaNode({
+  type: 'boolean',
+  meta: {
+    default: true,
+    volatile: true,
+    description: {
+      '': 'Renders mermaid code blocks in Markdown file previews as diagrams. The Mermaid library loads from a public CDN on first use, so an offline session keeps showing the fenced source.',
+      zh: '把 Markdown 文件预览中的 mermaid 代码块渲染成图。Mermaid 库在首次使用时从公共 CDN 加载,离线时保持显示源码。',
+    },
+  },
+})
+
+/**
  * The plugin configuration schema: the live discovery depth, whole-file diff
- * switch, and file-preview fix.
+ * switch, and the two preview switches.
  *
  * Hand-built to stay dependency-free; the shape mirrors schemastery's own wire
  * protocol so the Host treats it as a native graph.
@@ -2014,14 +2035,14 @@ const FILE_PREVIEW_FIX_NODE = makeSchemaNode({
 export const Config = makeSchemaNode({
   type: 'object',
   meta: {},
-  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE, wholeFileDiff: WHOLE_FILE_DIFF_NODE, filePreviewFix: FILE_PREVIEW_FIX_NODE },
+  dict: { discoveryDepth: DISCOVERY_DEPTH_NODE, wholeFileDiff: WHOLE_FILE_DIFF_NODE, filePreviewFix: FILE_PREVIEW_FIX_NODE, mermaidRender: MERMAID_RENDER_NODE },
 })
 
 /**
  * Register the operation route and apply the plugin configuration.
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
- * @param {{ discoveryDepth?: number, wholeFileDiff?: boolean, filePreviewFix?: boolean }} [config] - the validated plugin configuration.
+ * @param {{ discoveryDepth?: number, wholeFileDiff?: boolean, filePreviewFix?: boolean, mermaidRender?: boolean }} [config] - the validated plugin configuration.
  */
 export function apply(ctx, config) {
   settings.config = config ?? null

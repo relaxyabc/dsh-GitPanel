@@ -231,6 +231,17 @@ const primitivesStub = {
       disabled: props.disabled,
       onClick: () => props.onChange(props.checked !== true),
     }),
+  // The Mermaid preview body draws through the same MarkdownText primitive the
+  // built-in document body does; the stub only records what it was handed, so
+  // the assertions can pin the text, the streaming flag, and the labels.
+  MarkdownText: (props) =>
+    React.createElement('div', {
+      className: 'stub-markdown-text',
+      'data-text': props.text,
+      'data-streaming': String(props.streaming === true),
+      labels: props.labels,
+      pathImages: props.pathImages,
+    }),
 }
 
 globalThis.require = (name) => {
@@ -537,7 +548,7 @@ check(clientModule?.inject?.includes('configForms'), 'it injects the shared conf
 check(typeof clientModule?.apply === 'function', 'the module exports apply')
 
 /** Everything the fake client context captured. */
-const captured = { main: [], panels: [], types: [], bodies: [], titles: [], bundleConfigs: [] }
+const captured = { main: [], panels: [], types: [], bodies: [], titles: [], bundleConfigs: [], documentBodies: [], documentActions: [], documentPreviews: [] }
 
 /** Main-panel ids the fake layout service was asked to select. */
 const selectedPanels = []
@@ -549,10 +560,10 @@ let refusePanels = false
 let failClose = false
 
 /** The settings document the fake `configForms` service serves. */
-const settingsDocument = { status: 'ready', value: { discoveryDepth: 3, filePreviewFix: true }, base: {}, user: {}, writable: true, revision: 1 }
+const settingsDocument = { status: 'ready', value: { discoveryDepth: 3, filePreviewFix: true, mermaidRender: true }, base: {}, user: {}, writable: true, revision: 1 }
 
 /** The composition layer the fake Host resolves the document over: this plugin's schema defaults. */
-const settingsBase = { discoveryDepth: 3, filePreviewFix: true }
+const settingsBase = { discoveryDepth: 3, filePreviewFix: true, mermaidRender: true }
 
 /** The user layer the fake Host holds: only what a save wrote. */
 const settingsUser = {}
@@ -621,6 +632,17 @@ const localeStub = {
 /** Tab ids the fake sidebar controller was asked to close. */
 const closedTabs = []
 
+/**
+ * The document preview registry stand-in: captures the definitions plugins
+ * register, the way the real service holds the viewer menu's choices.
+ */
+const documentPreviewRegistry = {
+  register: (definition) => {
+    captured.documentPreviews.push(definition)
+    return () => {}
+  },
+}
+
 await clientModule.apply({
   effect: (callback) => {
     const disposer = callback()
@@ -640,6 +662,10 @@ await clientModule.apply({
     close: (tabId) => { closedTabs.push(tabId) },
   },
   configForms: configFormsStub,
+  // The real context answers service reads by name through `get`, which —
+  // unlike a declared inject — stays undefined-safe for a service this build
+  // may not carry; the harness mirrors that with the preview registry.
+  get: (name) => (name === 'documentPreviews' ? documentPreviewRegistry : undefined),
   slots: {
     inject: (name, callback) => {
       const disposer = callback()
@@ -651,6 +677,8 @@ await clientModule.apply({
       if (options.name === 'sidebar.right.pane.tab') captured.bodies.push({ options, component })
       if (options.name === 'sidebar.right.pane.tab.title') captured.titles.push({ options, component })
       if (options.name === 'plugins.bundle.config') captured.bundleConfigs.push({ options, component })
+      if (options.name === 'sidebar.right.tab.document') captured.documentBodies.push({ options, component })
+      if (options.name === 'sidebar.right.tab.document.actions') captured.documentActions.push({ options, component })
       return () => {}
     },
   },
@@ -1204,6 +1232,57 @@ check(
   globalThis.URL !== nativeUrl && new globalThis.URL('dsh-resource://file/x').hostname === 'file',
   'a cleared repair override leaves the repair on, as the default says',
   globalThis.URL === nativeUrl,
+)
+
+console.log('\nmermaid render setting')
+const mermaidToggle = switchByLabel(resetView.tree, 'Render Mermaid diagrams')
+check(mermaidToggle !== undefined, 'the card renders the Mermaid switch', collectText(resetView.tree).slice(-6))
+check(mermaidToggle?.props?.['aria-checked'] === 'true', 'the Mermaid renderer starts on, as its default says', mermaidToggle?.props)
+check(
+  collectText(resetView.tree).includes('File preview'),
+  'the Mermaid switch shares the preview heading',
+  collectText(resetView.tree).slice(0, 10),
+)
+const mermaidHelpButton = find(resetView.tree, (element) => element.props?.['aria-controls'] === 'GitPanel-mermaid-help')
+check(mermaidHelpButton?.props?.['aria-label'] === 'About Mermaid diagram rendering', 'the Mermaid row names its explanation button', mermaidHelpButton?.props)
+check(!collectText(resetView.tree).some((entry) => entry.includes('public CDN')), 'the Mermaid row explains nothing until it is asked to', collectText(resetView.tree).slice(-4))
+mermaidHelpButton?.props?.onClick?.()
+const mermaidHelpShown = await settle(resetView)
+const mermaidHelpText = collectText(mermaidHelpShown.tree).join('\n')
+check(
+  mermaidHelpText.includes('public CDN') && mermaidHelpText.includes('toggle beside the file path'),
+  'the explanation button names the network cost and the path-row toggle',
+  mermaidHelpText.slice(-300),
+)
+check(
+  find(mermaidHelpShown.tree, (element) => element.props?.id === 'GitPanel-mermaid-help')?.props?.role === 'region',
+  'the revealed Mermaid rules are a labelled region',
+  collectText(mermaidHelpShown.tree).slice(-8),
+)
+settingsWrites.length = 0
+switchByLabel(mermaidHelpShown.tree, 'Render Mermaid diagrams')?.props?.onClick?.()
+const mermaidOff = await settle(mermaidHelpShown)
+check(
+  switchByLabel(mermaidOff.tree, 'Render Mermaid diagrams')?.props?.['aria-checked'] === 'false',
+  'clicking the switch stages the off state',
+  switchByLabel(mermaidOff.tree, 'Render Mermaid diagrams')?.props,
+)
+find(mermaidOff.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ops[0]?.op === 'set' && settingsWrites[0].ops[0]?.path?.[0] === 'mermaidRender' && settingsWrites[0].ops[0]?.value === false,
+  'saving writes the Mermaid switch as a boolean',
+  settingsWrites,
+)
+cardFace.resetField('mermaidRender')
+const mermaidReset = await settle(mermaidOff)
+settingsWrites.length = 0
+find(mermaidReset.tree, (element) => element.type === 'button' && collectText(element).includes('Save'))?.props?.onClick?.()
+await drain()
+check(
+  settingsWrites.length === 1 && settingsWrites[0].ops[0]?.op === 'unset' && settingsWrites[0].ops[0]?.path?.[0] === 'mermaidRender',
+  'resetting the Mermaid switch clears the override, so its default returns',
+  settingsWrites,
 )
 
 const invalidCard = await render(cardComponent, { ...cardProps, view: 'page' })
@@ -2337,6 +2416,166 @@ refusePanels = false
 const recoveredTab = await render(Launcher, { ...tabProps, useTabInfo: () => tabInfo('tab-refused', true, 1) })
 check(closedTabs.includes('tab-refused'), 'the same record closes once the transition is possible', closedTabs)
 void recoveredTab
+
+console.log('\nmermaid document preview')
+const mermaidChunk = await moduleLoader.require.async('./client.mermaid.js')
+check(mermaidChunk.bodyId === 'GitPanel/markdown-mermaid', 'the chunk names its body id before any face exists', mermaidChunk.bodyId)
+// The face the entry builds shares the chunk-scope hub; build it the same way
+// the entry does, with the harness's own services in place of the injected ones.
+const mermaid = mermaidChunk.create({
+  h: React.createElement,
+  React,
+  primitives: primitivesStub,
+  StyleTag: () => React.createElement('style', null, ''),
+  fill: (template, vars) => template.replace(/\{(\w+)\}/g, (match, key) => (vars !== undefined && Object.hasOwn(vars, key) ? String(vars[key]) : match)),
+  failureText: (error) => (error instanceof Error ? error.message : String(error)),
+  boundTranslate: (key) => localeState.ns?.dicts?.[localeState.current]?.[key] ?? key,
+  SETTINGS_NS: 'GitPanel',
+  MERMAID_FIELD: 'mermaidRender',
+})
+check(captured.documentPreviews.length === 1, 'one document preview definition is registered', captured.documentPreviews.length)
+const mermaidDefinition = captured.documentPreviews[0]
+check(
+  mermaidDefinition?.id === mermaid.bodyId && mermaidDefinition?.extensions?.join(',') === 'md,markdown',
+  'the definition claims the Markdown suffixes under its own id',
+  { id: mermaidDefinition?.id, extensions: mermaidDefinition?.extensions },
+)
+check(mermaidDefinition?.priority === 'extension', 'the definition rides the extension band, so .md files open through it by default', mermaidDefinition?.priority)
+check(mermaidDefinition?.loading === 'text-pages' && mermaidDefinition?.wrap === false, 'the definition reads pages the way the built-in Markdown viewer does', mermaidDefinition)
+check(mermaidDefinition?.title?.() === 'Markdown (Mermaid)', 'the viewer menu names this renderer', mermaidDefinition?.title?.())
+check(captured.documentBodies.length === 1 && captured.documentBodies[0]?.options?.key === mermaid.bodyId, 'the body slot is registered under the definition id', captured.documentBodies[0]?.options)
+check(captured.documentBodies[0]?.options?.locale === 'gitPanel', 'the body slot reads the plugin dictionaries', captured.documentBodies[0]?.options?.locale)
+check(
+  captured.documentActions.length === 1 && captured.documentActions[0]?.options?.id === 'git-panel-mermaid-toggle',
+  'the path-row toggle is registered on the document toolbar list',
+  captured.documentActions[0]?.options,
+)
+
+console.log('\nmermaid markdown body')
+const mermaidBodyProps = {
+  content: { kind: 'text', text: '# Title\n\n```mermaid\nflowchart TD\n  A --> B\n```\n', pages: [], eof: true },
+  resourceAddress: 'dsh-resource://file/session/s1/E:/repo/README.md',
+  useResource: () => ({ value: { absolutePath: 'E:\\repo\\README.md' } }),
+  t: (key) => localeState.ns?.dicts?.[localeState.current]?.[key] ?? key,
+}
+const mermaidBodyView = await render(mermaid.MermaidMarkdownBody, mermaidBodyProps)
+const mermaidMarkdown = find(mermaidBodyView.tree, (element) => element.props?.className === 'stub-markdown-text')
+check(mermaidMarkdown !== undefined, 'the body draws through the shared Markdown primitive', collectText(mermaidBodyView.tree).slice(0, 6))
+check(String(mermaidMarkdown?.props?.['data-text']).includes('flowchart TD'), 'the body hands the document text over unchanged', mermaidMarkdown?.props?.['data-text'])
+check(mermaidMarkdown?.props?.['data-streaming'] === 'false', 'a complete document is not marked streaming', mermaidMarkdown?.props)
+check(
+  mermaidMarkdown?.props?.labels?.code?.copyLabel === 'Copy' &&
+    mermaidMarkdown?.props?.labels?.code?.toolbarLabels?.codeLabel === 'Code' &&
+    mermaidMarkdown?.props?.labels?.footnotes === 'Footnotes',
+  'the code-block labels come from the plugin dictionaries',
+  mermaidMarkdown?.props?.labels,
+)
+check(typeof mermaidMarkdown?.props?.pathImages?.resolve === 'function', 'the body resolves images like the built-in body does')
+check(
+  mermaid.markdownImageUrl('http://127.0.0.1:3080/', 'E:\\repo\\README.md', 'pic.png') === `http://127.0.0.1:3080/api/file?path=${encodeURIComponent('E:\\repo\\pic.png')}`,
+  'a relative image resolves beside the document through the file route',
+  mermaid.markdownImageUrl('http://127.0.0.1:3080/', 'E:\\repo\\README.md', 'pic.png'),
+)
+check(
+  mermaid.markdownImageUrl('http://127.0.0.1:3080/app/', '/home/me/project/README.md', 'assets/a.png') === `http://127.0.0.1:3080/app/api/file?path=${encodeURIComponent('/home/me/project/assets/a.png')}`,
+  'a POSIX document resolves its images the same way',
+)
+check(mermaid.markdownImageUrl('http://127.0.0.1:3080/', undefined, 'pic.png') === undefined, 'a relative image with no Host path resolves to nothing')
+check(mermaid.markdownImageUrl('http://127.0.0.1:3080/', 'E:\\repo\\README.md', 'https://example.com/a.png') === undefined, 'a remote image is left to the primitive')
+check(mermaid.markdownImageUrl('http://127.0.0.1:3080/', 'E:\\repo\\README.md', 'pic.png?v=2')?.includes(encodeURIComponent('E:\\repo\\pic.png')), 'a query string is not part of the image path')
+const mermaidBytesView = await render(mermaid.MermaidMarkdownBody, { ...mermaidBodyProps, content: { kind: 'bytes', data: new Uint8Array(8) } })
+check(mermaidBytesView.text().length === 0, 'a non-text delivery renders nothing', mermaidBytesView.text())
+const mermaidStreamingView = await render(mermaid.MermaidMarkdownBody, { ...mermaidBodyProps, content: { ...mermaidBodyProps.content, eof: false } })
+check(
+  find(mermaidStreamingView.tree, (element) => element.props?.className === 'stub-markdown-text')?.props?.['data-streaming'] === 'true',
+  'a streaming document is marked streaming',
+)
+
+console.log('\nmermaid path-row toggle')
+const mermaidToggleProps = { absolutePath: 'E:\\repo\\README.md', t: mermaidBodyProps.t }
+const mermaidToggleView = await render(mermaid.MermaidToggleAction, mermaidToggleProps)
+const mermaidToggleButtons = findAll(mermaidToggleView.tree, (element) => element.type === 'button')
+check(mermaidToggleButtons.length === 2, 'the toggle offers diagram and source', mermaidToggleButtons.map((element) => collectText(element)))
+check(
+  mermaidToggleButtons[0]?.props?.['aria-pressed'] === 'true' && mermaidToggleButtons[1]?.props?.['aria-pressed'] === 'false',
+  'the diagram side starts active',
+  mermaidToggleButtons.map((element) => element.props?.['aria-pressed']),
+)
+check(
+  collectText(mermaidToggleView.tree).includes('Diagram') && collectText(mermaidToggleView.tree).includes('Source'),
+  'the two sides carry their labels',
+  collectText(mermaidToggleView.tree),
+)
+check(find(mermaidToggleView.tree, (element) => element.type === 'style') !== undefined, 'the toggle carries the stylesheet its classes need')
+const plainFileToggle = await render(mermaid.MermaidToggleAction, { ...mermaidToggleProps, absolutePath: 'E:\\repo\\notes.txt' })
+check(plainFileToggle.text().length === 0, 'a non-Markdown preview shows no Mermaid toggle', plainFileToggle.text())
+mermaidToggleButtons[1]?.props?.onClick?.()
+const sourceSideView = await settle(mermaidToggleView)
+const sourceSideButtons = findAll(sourceSideView.tree, (element) => element.type === 'button')
+check(
+  sourceSideButtons[0]?.props?.['aria-pressed'] === 'false' && sourceSideButtons[1]?.props?.['aria-pressed'] === 'true',
+  'clicking source moves the active side',
+  sourceSideButtons.map((element) => element.props?.['aria-pressed']),
+)
+mermaid.hub.patch({ mode: 'diagram' })
+await drain()
+
+console.log('\nthe render switch gates the toggle')
+settingsDocument.value = { ...settingsDocument.value, mermaidRender: false }
+for (const listener of settingsListeners) listener()
+const gatedToggleView = await render(mermaid.MermaidToggleAction, mermaidToggleProps)
+check(gatedToggleView.text().length === 0, 'a disabled renderer shows no toggle', gatedToggleView.text())
+check(mermaid.hub.snapshot().enabled === false, 'the hub follows the saved switch', mermaid.hub.snapshot())
+settingsDocument.value = { ...settingsDocument.value, mermaidRender: true }
+for (const listener of settingsListeners) listener()
+check(mermaid.hub.snapshot().enabled === true, 'turning the switch back on re-enables the renderer', mermaid.hub.snapshot())
+
+console.log('\nmermaid fence scanner')
+const scan = mermaid.scanMermaidBlocks
+check(scan('# hi\n\n```mermaid\nflowchart TD\n  A --> B\n```\n').join('|') === 'flowchart TD\n  A --> B', 'a mermaid fence is captured', scan('# hi\n\n```mermaid\nflowchart TD\n  A --> B\n```\n'))
+check(scan('```mermaid\ngraph LR\n```\n```js\nconst a = 1\n```\n').length === 1, 'a non-mermaid fence is left alone')
+check(scan('```js\n```mermaid\nflowchart TD\n```\n```\n').length === 0, 'a mermaid fence inside another fence is not matched')
+check(scan('~~~mermaid\nflowchart TD\n~~~\n').length === 1, 'a tilde fence is matched')
+check(scan('````mermaid\nflowchart TD\n````\n').length === 1, 'a longer backtick fence is matched')
+check(scan('   ```mermaid\nflowchart TD\n   ```\n').length === 1, 'an indented fence is matched')
+check(scan('```mermaid\nflowchart TD\n').length === 1, 'an unterminated mermaid fence is kept, as the parser renders it')
+check(scan('```mermaid\nA\n```\ntext\n```mermaid\nB\n```\n').join('|') === 'A|B', 'two fences are captured in order')
+check(scan('```Mermaid\nflowchart TD\n```\n').length === 1, 'the info string is case-insensitive')
+check(scan('```mermaid\r\nflowchart TD\r\n```\r\n')[0] === 'flowchart TD', 'carriage returns are stripped', scan('```mermaid\r\nflowchart TD\r\n```\r\n'))
+check(scan('').length === 0 && scan('no fences here').length === 0, 'a document without fences scans to nothing')
+
+console.log('\nmermaid library loader')
+const fakeMermaid = {
+  initializeCalls: [],
+  initialize(config) {
+    this.initializeCalls.push(config)
+  },
+  async render(id, source) {
+    return { svg: `<svg data-id="${id}">${source}</svg>` }
+  },
+}
+const attemptedUrls = []
+let fallbackAttempt = 0
+const loadedMermaid = await mermaid.loadMermaid(async (url) => {
+  attemptedUrls.push(url)
+  fallbackAttempt += 1
+  if (fallbackAttempt === 1) throw new Error('mirror down')
+  return { default: fakeMermaid }
+})
+check(loadedMermaid === fakeMermaid, 'the first source that serves a module wins', attemptedUrls)
+check(attemptedUrls.length === 2, 'the next mirror is tried when one fails', attemptedUrls)
+check(
+  fakeMermaid.initializeCalls[0]?.startOnLoad === false && fakeMermaid.initializeCalls[0]?.securityLevel === 'strict',
+  'the library is initialized with the safe defaults',
+  fakeMermaid.initializeCalls[0],
+)
+check(mermaid.hub.snapshot().library === 'ready', 'the hub records the library as ready')
+const againAttempted = attemptedUrls.length
+await mermaid.loadMermaid(async (url) => {
+  attemptedUrls.push(url)
+  return { default: fakeMermaid }
+})
+check(attemptedUrls.length === againAttempted, 'the module is imported once per session', attemptedUrls.length)
 
 console.log(`\n${checks - failures}/${checks} checks passed`)
 if (failures > 0) process.exitCode = 1

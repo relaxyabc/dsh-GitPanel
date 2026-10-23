@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
       SETTINGS_NS, DEPTH_FIELD, DEPTH_INPUT_ID, DISCOVERY_SECTION_ID,
       WHOLE_FILE_FIELD, WHOLE_FILE_SPEC, WHOLE_FILE_HELP_ID, DISPLAY_SECTION_ID,
       FILE_PREVIEW_FIELD, FILE_PREVIEW_SPEC, FILE_PREVIEW_HELP_ID, FILE_PREVIEW_SECTION_ID,
+      MERMAID_FIELD, MERMAID_SPEC, MERMAID_HELP_ID,
     } = shared
 
     /**
@@ -59,12 +60,16 @@ window.__ModuleLoader__.load({
       const state = props.useGitSettings((snapshot) => snapshot)
       const [wholeFileHelp, setWholeFileHelp] = React.useState(false)
       const [filePreviewHelp, setFilePreviewHelp] = React.useState(false)
+      const [mermaidHelp, setMermaidHelp] = React.useState(false)
       // A cleared draft inherits the composition default (off), so the switch
       // previews the value a save would leave rather than the raw draft text.
       const wholeFile = state[WHOLE_FILE_FIELD].text === 'true'
       // This field's composition default is the reverse: a cleared draft means
       // the repair is on, so only the literal `false` reads as off.
       const filePreview = state[FILE_PREVIEW_FIELD].text !== 'false'
+      // Same composition default again: the Mermaid renderer draws unless the
+      // user turned it off.
+      const mermaid = state[MERMAID_FIELD].text !== 'false'
       return h(
         primitives.SettingsForm,
         {
@@ -215,6 +220,55 @@ window.__ModuleLoader__.load({
                 )
               : null,
           ),
+          // The Mermaid switch shares the preview group: both fields shape the
+          // same right-Sidebar file preview, and each carries the same mirrored
+          // info button as the whole-file switch above.
+          h(
+            'div',
+            { className: 'git-panel-config-toggle' },
+            h(
+              'div',
+              { className: 'git-panel-config-toggle-row' },
+              h(
+                'div',
+                { className: 'git-panel-config-toggle-label' },
+                h('span', null, t('mermaidRender')),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'git-panel-config-help-button',
+                    'aria-label': t('mermaidRender.help'),
+                    'aria-expanded': mermaidHelp,
+                    'aria-controls': MERMAID_HELP_ID,
+                    onClick: () => setMermaidHelp(mermaidHelp !== true),
+                  },
+                  h(primitives.IconInfoOutlineRegular, { size: 12 }),
+                ),
+              ),
+              state[MERMAID_FIELD].overridden
+                ? h(
+                    'span',
+                    { className: 'git-panel-config-badges' },
+                    h(primitives.Tag, { tone: 'neutral' }, t('settings.overridden')),
+                    h('button', { type: 'button', className: 'git-panel-config-reset', disabled: state.writable !== true, onClick: () => props.resetField(MERMAID_FIELD) }, t('settings.reset')),
+                  )
+                : null,
+              h(primitives.Switch, {
+                checked: mermaid,
+                label: t('mermaidRender'),
+                disabled: state.writable !== true,
+                onChange: (next) => props.edit(MERMAID_FIELD, next === true ? 'true' : 'false'),
+              }),
+            ),
+            mermaidHelp === true
+              ? h(
+                  'div',
+                  { id: MERMAID_HELP_ID, className: 'git-panel-config-help', role: 'region', 'aria-label': t('mermaidRender.help') },
+                  helpParagraphs(t('mermaidRender.help.body'), t('mermaidRender.help.note')),
+                )
+              : null,
+          ),
         ),
       )
     }
@@ -226,12 +280,13 @@ window.__ModuleLoader__.load({
      * @returns {{ inject: Function, dispose: Function }} the card's slot face and its disposer.
      */
     function createSettingsCard(configForms) {
-      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC, FILE_PREVIEW_SPEC])
+      const form = new primitives.SettingsFormModel(configForms.get(SETTINGS_NS), [primitives.settingsNumberField(DEPTH_FIELD), WHOLE_FILE_SPEC, FILE_PREVIEW_SPEC, MERMAID_SPEC])
       const store = form.bind(() => ({
         ...form.shell(),
         [DEPTH_FIELD]: form.field(DEPTH_FIELD),
         [WHOLE_FILE_FIELD]: form.field(WHOLE_FILE_FIELD),
         [FILE_PREVIEW_FIELD]: form.field(FILE_PREVIEW_FIELD),
+        [MERMAID_FIELD]: form.field(MERMAID_FIELD),
       }))
       return {
         /**

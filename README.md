@@ -42,15 +42,18 @@
 
 ### 配置
 
-配置在**插件页面「已安装」分组里的 `GitPanel`** 上(本包自己的配置位,不占官方分组),分「仓库发现」「差异显示」「文件预览」三组;输入后按「保存」写入 profile,三个字段都即时生效、无需重启。
+配置在**插件页面「已安装」分组里的 `GitPanel`** 上(本包自己的配置位,不占官方分组),分「仓库发现」「差异显示」「文件预览」三组;输入后按「保存」写入 profile,四个字段都即时生效、无需重启。
 
 | 配置项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `discoveryDepth` | number(1–8) | `3` | 仓库发现向下递归的目录层数;运行时始终夹取在该区间内 |
 | `wholeFileDiff` | boolean | `false` | 开启后 diff 左右两栏显示整个文件而不只是改动片段 |
 | `filePreviewFix` | boolean | `true` | 修复 Chromium 上「文件资源服务不可用」的文件预览,见下 |
+| `mermaidRender` | boolean | `true` | 在 Markdown 文件预览中把 mermaid 代码块渲染成图,见下 |
 
 `filePreviewFix` 补偿的是 DSH 上游的一个缺陷([discussion #6437](https://github.com/deepseek-ai/deepseek-harness/discussions/6437)):`dsh-client-resources` 用 `new URL(address).hostname` 取协议键,而 Chromium 不把非特殊 scheme 的 authority 当作主机(`new URL('dsh-resource://file/x').hostname` 在 Node 上是 `file`、在 Chromium 上是 `''`),于是每个资源地址都解析不出提供方,右侧边栏的文件预览只剩那句报错。本插件的修复**只改 `dsh-resource://` 这一类地址**(其余地址、相对地址解析、非法地址抛错全部交回浏览器),代价是这类地址**不是 `instanceof URL`**、就地改写部件不回写整条地址(面板只读不改)。上游修好后可以关闭本项。
+
+`mermaidRender` 开启后,`.md` / `.markdown` 文件在右侧边栏默认经本插件注册的文档渲染器打开(`extension` 优先级高于内置 viewer,内置的 **Markdown** 渲染器仍保留在预览工具栏的 viewer 菜单里,随时可切回)。正文就是 DSH 自带的 `MarkdownText` 原语——图片解析、脚注、代码块工具栏与内置完全一致——只有 ` ```mermaid ` 围栏被替换成渲染出的 SVG;文件路径一栏会出现**「图 / 源码」**两段开关,在当前预览的渲染图与围栏源码之间切换。Mermaid 库(约 2 MB)在**首次遇到 mermaid 块时**从公共 CDN 动态加载(jsdelivr → unpkg → esm.sh 依次尝试,`securityLevel: 'strict'`),离线或加载失败保持显示源码并注明原因;渲染随明暗主题自动重画。关闭本项即始终显示源码。
 
 **排障:Office 文档与 PDF 预览报 `无法显示 PDF:n.toHex is not a function`。** 这类预览由 DSH 内置的 pdf.js(pdfjs-dist 6.3.289)渲染,而该构建直接调用 `Uint8Array.prototype.toHex`、`Uint8Array.prototype.toBase64`、`Float16Array`、`Math.sumPrecise`、`Map.prototype.getOrInsert`、`RegExp.escape` —— 都是 2026 年前后才进入引擎的 API;另外 DSH 的 PDF 载体明确不会退回主线程解析。所以在旧浏览器(例如 Chrome 128)上,**任何** PDF 渲染都会在加载文档时失败,`.doc` / `.docx` / `.ppt` / `.pptx` 预览因为走「Office → PDF → pdf.js」这条路,看起来像「只有 Office 文档坏」。这与本插件的地址修复无关(地址修复只让 DSH 找得到提供方,能不能渲染是浏览器的事),也补不了:补丁得落进 pdf 渲染 Worker 自己的 realm 并补齐上述六个引擎特性。**把浏览器升到当前版本即可恢复**(验证方法:旧浏览器上预览一个普通 `.pdf` 会报同样的错,升级后 PDF 与 Office 文档一起恢复)。
 
@@ -85,6 +88,10 @@
 - 提交右键菜单 / 提交信息右键菜单里的「修改提交信息」弹出的改写对话框,其多行输入框同样自适应高度(`clamp(150px, 26vh, 360px)`),不再是单行小框。这两处既有菜单的文案保持不变 —— 只有提交框里的 amend 控件在中文界面下也用英文 **Amend**。
 - **Push**(必要时自动 `--set-upstream`)、**Fetch**(只下载对象与远程跟踪引用)、**Pull**(仅当前分支有上游时可用)。
 - 暂存、提交、推送只重载相关数据:暂存不会重新扫描工作区或重读历史,因此不会出现整面板「载入中」。
+
+**文件预览(右侧边栏)**
+- Markdown 中的 mermaid 代码块渲染为图,文件路径一栏有「图 / 源码」开关,见上文 `mermaidRender` 配置;预览本体(文本分页、图片、脚注、代码块工具栏)与 DSH 内置 Markdown 渲染器一致。
+- `filePreviewFix` 让资源地址在 Chromium 上解析出正确提供方,见上文;两条都即时生效,关闭即回到 DSH 原生行为。
 
 **子模块**
 - 列出全部子模块与状态(initialized / uninitialized / out-of-date / conflicted),一键 init / update / sync(递归)。
@@ -187,6 +194,7 @@ dsh-GitPanel/                             # 插件包 GitPanel(仓库根即包�
 │  ├─ client.diff.js                     #   unified diff 解析、改动导航、并排视图与弹层
 │  ├─ client.settings.js                 #   插件页面上的配置卡片
 │  ├─ client.preview-fix.js              #   资源地址修复及其地址读取
+│  ├─ client.mermaid.js                  #   Markdown 文档渲染器(Mermaid 图)、路径行图/源码开关
 │  ├─ client.sidebar.js                  #   右侧边栏的门与标题
 │  ├─ client.i18n.js                     #   中英词典
 │  └─ client.style.js                    #   设计令牌样式表与 Git 图标路径
