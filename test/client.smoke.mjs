@@ -1245,13 +1245,13 @@ check(
 )
 const mermaidHelpButton = find(resetView.tree, (element) => element.props?.['aria-controls'] === 'GitPanel-mermaid-help')
 check(mermaidHelpButton?.props?.['aria-label'] === 'About Mermaid diagram rendering', 'the Mermaid row names its explanation button', mermaidHelpButton?.props)
-check(!collectText(resetView.tree).some((entry) => entry.includes('public CDN')), 'the Mermaid row explains nothing until it is asked to', collectText(resetView.tree).slice(-4))
+check(!collectText(resetView.tree).some((entry) => entry.includes('viewer menu')), 'the Mermaid row explains nothing until it is asked to', collectText(resetView.tree).slice(-4))
 mermaidHelpButton?.props?.onClick?.()
 const mermaidHelpShown = await settle(resetView)
 const mermaidHelpText = collectText(mermaidHelpShown.tree).join('\n')
 check(
-  mermaidHelpText.includes('public CDN') && mermaidHelpText.includes('toggle beside the file path'),
-  'the explanation button names the network cost and the path-row toggle',
+  mermaidHelpText.includes('ships inside the plugin') && mermaidHelpText.includes('viewer menu'),
+  'the explanation names the bundled library and the viewer-menu switch',
   mermaidHelpText.slice(-300),
 )
 check(
@@ -2418,6 +2418,11 @@ check(closedTabs.includes('tab-refused'), 'the same record closes once the trans
 void recoveredTab
 
 console.log('\nmermaid document preview')
+const mermaidLibChunk = await moduleLoader.require.async('./client.mermaid-lib.js')
+check(typeof mermaidLibChunk?.current === 'function', 'the library chunk exposes a reader for the global it installs', Object.keys(mermaidLibChunk ?? {}))
+const vendoredMermaid = mermaidLibChunk.current()
+check(vendoredMermaid !== null && typeof vendoredMermaid === 'object', 'the vendored build evaluated and installed the mermaid global', typeof vendoredMermaid)
+check(typeof vendoredMermaid?.initialize === 'function' && typeof vendoredMermaid?.render === 'function', 'the vendored build answers the two calls the feature makes', { initialize: typeof vendoredMermaid?.initialize, render: typeof vendoredMermaid?.render })
 const mermaidChunk = await moduleLoader.require.async('./client.mermaid.js')
 check(mermaidChunk.bodyId === 'GitPanel/markdown-mermaid', 'the chunk names its body id before any face exists', mermaidChunk.bodyId)
 // The face the entry builds shares the chunk-scope hub; build it the same way
@@ -2432,6 +2437,7 @@ const mermaid = mermaidChunk.create({
   boundTranslate: (key) => localeState.ns?.dicts?.[localeState.current]?.[key] ?? key,
   SETTINGS_NS: 'GitPanel',
   MERMAID_FIELD: 'mermaidRender',
+  mermaidLibrary: mermaidLibChunk.current,
 })
 check(captured.documentPreviews.length === 1, 'one document preview definition is registered', captured.documentPreviews.length)
 const mermaidDefinition = captured.documentPreviews[0]
@@ -2445,11 +2451,7 @@ check(mermaidDefinition?.loading === 'text-pages' && mermaidDefinition?.wrap ===
 check(mermaidDefinition?.title?.() === 'Markdown (Mermaid)', 'the viewer menu names this renderer', mermaidDefinition?.title?.())
 check(captured.documentBodies.length === 1 && captured.documentBodies[0]?.options?.key === mermaid.bodyId, 'the body slot is registered under the definition id', captured.documentBodies[0]?.options)
 check(captured.documentBodies[0]?.options?.locale === 'gitPanel', 'the body slot reads the plugin dictionaries', captured.documentBodies[0]?.options?.locale)
-check(
-  captured.documentActions.length === 1 && captured.documentActions[0]?.options?.id === 'git-panel-mermaid-toggle',
-  'the path-row toggle is registered on the document toolbar list',
-  captured.documentActions[0]?.options,
-)
+check(captured.documentActions.length === 0, 'no path-row toggle exists: the viewer menu is the diagram/source switch', captured.documentActions.length)
 
 console.log('\nmermaid markdown body')
 const mermaidBodyProps = {
@@ -2491,40 +2493,9 @@ check(
   'a streaming document is marked streaming',
 )
 
-console.log('\nmermaid path-row toggle')
-const mermaidToggleProps = { absolutePath: 'E:\\repo\\README.md', t: mermaidBodyProps.t }
-const mermaidToggleView = await render(mermaid.MermaidToggleAction, mermaidToggleProps)
-const mermaidToggleButtons = findAll(mermaidToggleView.tree, (element) => element.type === 'button')
-check(mermaidToggleButtons.length === 2, 'the toggle offers diagram and source', mermaidToggleButtons.map((element) => collectText(element)))
-check(
-  mermaidToggleButtons[0]?.props?.['aria-pressed'] === 'true' && mermaidToggleButtons[1]?.props?.['aria-pressed'] === 'false',
-  'the diagram side starts active',
-  mermaidToggleButtons.map((element) => element.props?.['aria-pressed']),
-)
-check(
-  collectText(mermaidToggleView.tree).includes('Diagram') && collectText(mermaidToggleView.tree).includes('Source'),
-  'the two sides carry their labels',
-  collectText(mermaidToggleView.tree),
-)
-check(find(mermaidToggleView.tree, (element) => element.type === 'style') !== undefined, 'the toggle carries the stylesheet its classes need')
-const plainFileToggle = await render(mermaid.MermaidToggleAction, { ...mermaidToggleProps, absolutePath: 'E:\\repo\\notes.txt' })
-check(plainFileToggle.text().length === 0, 'a non-Markdown preview shows no Mermaid toggle', plainFileToggle.text())
-mermaidToggleButtons[1]?.props?.onClick?.()
-const sourceSideView = await settle(mermaidToggleView)
-const sourceSideButtons = findAll(sourceSideView.tree, (element) => element.type === 'button')
-check(
-  sourceSideButtons[0]?.props?.['aria-pressed'] === 'false' && sourceSideButtons[1]?.props?.['aria-pressed'] === 'true',
-  'clicking source moves the active side',
-  sourceSideButtons.map((element) => element.props?.['aria-pressed']),
-)
-mermaid.hub.patch({ mode: 'diagram' })
-await drain()
-
-console.log('\nthe render switch gates the toggle')
+console.log('\nthe render switch gates the renderer')
 settingsDocument.value = { ...settingsDocument.value, mermaidRender: false }
 for (const listener of settingsListeners) listener()
-const gatedToggleView = await render(mermaid.MermaidToggleAction, mermaidToggleProps)
-check(gatedToggleView.text().length === 0, 'a disabled renderer shows no toggle', gatedToggleView.text())
 check(mermaid.hub.snapshot().enabled === false, 'the hub follows the saved switch', mermaid.hub.snapshot())
 settingsDocument.value = { ...settingsDocument.value, mermaidRender: true }
 for (const listener of settingsListeners) listener()
@@ -2545,37 +2516,22 @@ check(scan('```mermaid\r\nflowchart TD\r\n```\r\n')[0] === 'flowchart TD', 'carr
 check(scan('').length === 0 && scan('no fences here').length === 0, 'a document without fences scans to nothing')
 
 console.log('\nmermaid library loader')
-const fakeMermaid = {
-  initializeCalls: [],
-  initialize(config) {
-    this.initializeCalls.push(config)
-  },
-  async render(id, source) {
-    return { svg: `<svg data-id="${id}">${source}</svg>` }
-  },
+const initializeCalls = []
+const originalInitialize = vendoredMermaid.initialize.bind(vendoredMermaid)
+vendoredMermaid.initialize = (config) => {
+  initializeCalls.push(config)
+  return originalInitialize(config)
 }
-const attemptedUrls = []
-let fallbackAttempt = 0
-const loadedMermaid = await mermaid.loadMermaid(async (url) => {
-  attemptedUrls.push(url)
-  fallbackAttempt += 1
-  if (fallbackAttempt === 1) throw new Error('mirror down')
-  return { default: fakeMermaid }
-})
-check(loadedMermaid === fakeMermaid, 'the first source that serves a module wins', attemptedUrls)
-check(attemptedUrls.length === 2, 'the next mirror is tried when one fails', attemptedUrls)
+const loadedMermaid = await mermaid.loadMermaid()
+check(loadedMermaid === vendoredMermaid, 'the loader hands out the vendored build', loadedMermaid === vendoredMermaid)
 check(
-  fakeMermaid.initializeCalls[0]?.startOnLoad === false && fakeMermaid.initializeCalls[0]?.securityLevel === 'strict',
+  initializeCalls[0]?.startOnLoad === false && initializeCalls[0]?.securityLevel === 'strict',
   'the library is initialized with the safe defaults',
-  fakeMermaid.initializeCalls[0],
+  initializeCalls[0],
 )
 check(mermaid.hub.snapshot().library === 'ready', 'the hub records the library as ready')
-const againAttempted = attemptedUrls.length
-await mermaid.loadMermaid(async (url) => {
-  attemptedUrls.push(url)
-  return { default: fakeMermaid }
-})
-check(attemptedUrls.length === againAttempted, 'the module is imported once per session', attemptedUrls.length)
+await mermaid.loadMermaid()
+check(initializeCalls.length === 1, 'the library is taken into use once per session', initializeCalls.length)
 
 console.log(`\n${checks - failures}/${checks} checks passed`)
 if (failures > 0) process.exitCode = 1

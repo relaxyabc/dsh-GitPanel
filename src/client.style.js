@@ -218,14 +218,6 @@ window.__ModuleLoader__.load({
       '.git-panel-mermaid-figure>svg{display:block;margin:0 auto;max-width:100%;height:auto}',
       '.git-panel-mermaid-note{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-mermaid-note[data-tone="error"]{color:var(--dsw-alias-status-danger,#cf222e)}',
-      // The path-row toggle is a two-segment control sized to the toolbar it
-      // joins: compact height, shared border, and the active side marked by the
-      // brand tint rather than a second border.
-      '.git-panel-mermaid-toggle{display:inline-flex;flex:none;align-items:stretch;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 32%,transparent);border-radius:5px;overflow:hidden}',
-      '.git-panel-mermaid-toggle button{border:0;background:transparent;color:var(--dsw-alias-label-secondary,#57606a);padding:2px 8px;font:inherit;font-size:11px;line-height:1.6;cursor:pointer;white-space:nowrap}',
-      '.git-panel-mermaid-toggle button+button{border-left:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary,#57606a) 24%,transparent)}',
-      '.git-panel-mermaid-toggle button[aria-pressed="true"]{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 16%,transparent);color:var(--dsw-alias-brand-primary,#0969da);font-weight:600}',
-      '.git-panel-mermaid-toggle button:focus-visible{outline:none;background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.1))}',
     ].join('\n'),
 
     GIT_PATH:

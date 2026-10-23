@@ -598,7 +598,7 @@ window.__ModuleLoader__.load({
       // Every other chunk is requested here, before a single seat is registered:
       // the panel, the settings card, and the tab door are all handed to the
       // framework in this call, so nothing they render may still be waiting.
-      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, branchesFace, historyFace, panelFace, mermaidFace] = await Promise.all([
+      const [i18n, style, settingsFace, sidebarFace, rowsFace, diffFace, branchesFace, historyFace, panelFace, mermaidLibFace, mermaidFace] = await Promise.all([
         require.async('./client.i18n.js'),
         require.async('./client.style.js'),
         require.async('./client.settings.js'),
@@ -608,8 +608,16 @@ window.__ModuleLoader__.load({
         require.async('./client.branches.js'),
         require.async('./client.history.js'),
         require.async('./client.panel.js'),
+        // The vendored Mermaid build is a plain library chunk: it evaluates the
+        // upstream bundle once and exposes a reader for the global it installs.
+        // Local and cached, it is requested with the rest so the feature needs
+        // no network on any machine.
+        require.async('./client.mermaid-lib.js'),
         require.async('./client.mermaid.js'),
       ])
+      // Hand the vendored library's reader to the feature chunk through the
+      // shared table — a chunk never reaches another chunk's exports directly.
+      shared.mermaidLibrary = mermaidLibFace.current
       dictionaries = i18n
       STYLES = style.STYLES
       GIT_PATH = style.GIT_PATH
@@ -683,15 +691,17 @@ window.__ModuleLoader__.load({
       }
 
       // The Mermaid preview rides on the document preview's own extension
-      // points — its registry, its body slot, and its toolbar contribution
-      // list — so a deployment without the primitives module or without the
-      // document preview service keeps the built-in Markdown rendering instead
-      // of losing the whole tool with it. The registry arrives through
-      // `ctx.get`, never through the inject list: an undeclared inject parks
-      // the whole plugin on a build that has no such service, while `get`
-      // answers undefined and this feature simply skips. The two slot
-      // injections are guarded because they name slots another entry declares:
-      // a future rename there must cost this feature, not the panel.
+      // points — its registry and its body slot — so a deployment without the
+      // primitives module or without the document preview service keeps the
+      // built-in Markdown rendering instead of losing the whole tool with it.
+      // The registry arrives through `ctx.get`, never through the inject list:
+      // an undeclared inject parks the whole plugin on a build that has no such
+      // service, while `get` answers undefined and this feature simply skips.
+      // The body-slot injection is guarded because it names a slot another
+      // entry declares: a future rename there must cost this feature, not the
+      // panel. Diagram versus source is the toolbar's viewer menu — the
+      // built-in Markdown renderer is the source view — so there is no second
+      // registration here of our own.
       const mermaid = primitives !== null ? mermaidFace.create(shared) : null
       const previewRegistry = typeof ctx.get === 'function' ? ctx.get('documentPreviews') : undefined
       if (mermaid !== null && previewRegistry !== null && typeof previewRegistry?.register === 'function') {
@@ -706,18 +716,6 @@ window.__ModuleLoader__.load({
             return () => {}
           }
         }, 'ui-GitPanel: mermaid markdown body')
-        ctx.effect(() => {
-          try {
-            return ctx.slots.inject('sidebar.right.tab.document.actions', () =>
-              ctx.slots.register(
-                { name: 'sidebar.right.tab.document.actions', id: 'git-panel-mermaid-toggle', order: 30, locale: LOCALE_NS },
-                mermaid.MermaidToggleAction,
-              ),
-            )
-          } catch {
-            return () => {}
-          }
-        }, 'ui-GitPanel: mermaid preview toggle')
       }
     }
 

@@ -1,21 +1,19 @@
 /**
- * The Mermaid-aware Markdown document preview, and the path-row toggle that
- * switches it.
+ * The Mermaid-aware Markdown document preview.
  *
  * Split out of `client.js` as a package-local chunk: it is a whole second
  * document renderer — registered into the document preview's own registry with
  * extension priority, so `.md` files open through it by default — plus the DOM
- * pass that turns the renderer's mermaid code blocks into diagrams and the
- * toolbar cell that switches a preview between diagram and source. Everything
- * here shares one small hub so the toolbar cell and the body, which the
- * framework mounts as two separate trees, agree without a prop between them.
+ * pass that turns the renderer's mermaid code blocks into diagrams. Diagram
+ * versus source is not a switch here: the document toolbar's viewer menu is,
+ * with the built-in Markdown renderer (whose mermaid blocks stay source) as the
+ * other choice. The body and the configuration watch share one small hub.
  *
  * The renderer itself is DSH's `MarkdownText` primitive, exactly what the
  * built-in Markdown body draws with; only the mermaid blocks are replaced, and
  * every DOM write is diff-shaped so a pass that finds nothing to change writes
- * nothing. The Mermaid library is nobody's dependency: it loads from a public
- * CDN on first use, and a session that cannot reach one keeps the fenced
- * source the built-in preview would have shown.
+ * nothing. The Mermaid library ships inside the package as a sibling chunk
+ * (`client.mermaid-lib.js`), so rendering needs no network at all.
  *
  * @module GitPanel/client.mermaid
  */
@@ -32,22 +30,23 @@ const MERMAID_BODY_ID = 'GitPanel/markdown-mermaid'
  *
  * `enabled` mirrors the plugin configuration (the documented default is
  * on, and only an explicit `false` turns it off, exactly like the
- * address repair); `mode` is what the path-row toggle switched last, a
- * preference rather than a per-tab state; `library` says whether the
- * Mermaid module has been imported (`pending`), arrived (`ready`), or is
- * unreachable this session (`unavailable`); `themeEpoch` bumps whenever
- * the page's palette flips, so drawn diagrams redraw in the new colors.
+ * address repair); `library` says whether the vendored Mermaid build has
+ * been read and initialized (`pending`), arrived (`ready`), or is unusable
+ * this session (`unavailable`); `themeEpoch` bumps whenever the page's
+ * palette flips, so drawn diagrams redraw in the new colors. There is no
+ * diagram/source switch here: the document toolbar's viewer menu is the
+ * switch, with the built-in Markdown renderer as the source view.
  *
  * This lives at the chunk's own scope, not inside `create`: the config watch
  * the entry registers and every face a harness builds must agree on one hub.
  */
 const hub = {
-  state: { enabled: true, mode: 'diagram', library: 'pending', themeEpoch: 0 },
+  state: { enabled: true, library: 'pending', themeEpoch: 0 },
   listeners: new Set(),
   /**
    * Read the current state.
    *
-   * @returns {{ enabled: boolean, mode: string, library: string, themeEpoch: number }} a fresh snapshot object.
+   * @returns {{ enabled: boolean, library: string, themeEpoch: number }} a fresh snapshot object.
    */
   snapshot() {
     return { ...hub.state }
@@ -55,7 +54,7 @@ const hub = {
   /**
    * Merge one patch and notify when something changed.
    *
-   * @param {Partial<{ enabled: boolean, mode: string, library: string, themeEpoch: number }>} patch - the next values.
+   * @param {Partial<{ enabled: boolean, library: string, themeEpoch: number }>} patch - the next values.
    * @returns {void} nothing.
    */
   patch(patch) {
@@ -104,7 +103,7 @@ window.__ModuleLoader__.load({
   factory: () => ({ bodyId: MERMAID_BODY_ID, create: (shared) => {
     const {
       h, React, primitives, StyleTag, fill, failureText, boundTranslate,
-      SETTINGS_NS, MERMAID_FIELD,
+      SETTINGS_NS, MERMAID_FIELD, mermaidLibrary,
     } = shared
 
     /**
@@ -113,21 +112,6 @@ window.__ModuleLoader__.load({
      * fallback there, and this renderer should not quietly change that.
      */
     const MARKDOWN_EXTENSIONS = ['md', 'markdown']
-
-    /**
-     * Where the Mermaid library may come from, tried in order.
-     *
-     * The bundle stays dependency-free, and a vendored copy would weigh more
-     * than the rest of the plugin together, so the first use imports one of
-     * these module addresses; all three serve Mermaid 11 with its own chunks.
-     * A failure is remembered for the session and shows the source instead —
-     * exactly what the built-in preview does.
-     */
-    const MERMAID_CDN_SOURCES = [
-      'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs',
-      'https://unpkg.com/mermaid@11/dist/mermaid.esm.min.mjs',
-      'https://esm.sh/mermaid@11',
-    ]
 
     /**
      * Fence-scan line ceiling.
@@ -217,35 +201,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Import the Mermaid library, or remember that it could not be reached.
+     * Take the vendored Mermaid build into use, or remember that it is unusable.
      *
-     * The sources are tried in order and the outcome — module or failure — is
-     * remembered for the session, so a offline page does not retry the network
-     * on every diagram. `importer` is the test seam: the smoke harness stubs
-     * it instead of fetching a CDN.
+     * The library ships as a package-local chunk (`client.mermaid-lib.js`) that
+     * the entry materializes with the rest, so there is no network anywhere in
+     * this path and an air-gapped machine renders like any other. The outcome —
+     * library or failure — is remembered for the session, so a broken build
+     * costs one check, not one per diagram.
      *
-     * @param {(url: string) => Promise<unknown>} [importer] - the module loader, default a dynamic `import`.
-     * @returns {Promise<object|null>} the library, or null when no source served one.
+     * @returns {Promise<object|null>} the library, or null when the vendored build did not provide one.
      */
-    function loadMermaid(importer) {
+    function loadMermaid() {
       if (mermaidPromise !== null) return mermaidPromise
-      const attempt = importer ?? ((url) => import(url))
       mermaidPromise = (async () => {
-        for (const url of MERMAID_CDN_SOURCES) {
-          try {
-            const mod = await attempt(url)
-            const lib = mod?.default ?? mod
-            if (typeof lib?.initialize !== 'function' || typeof lib?.render !== 'function') continue
-            lib.initialize({ startOnLoad: false, securityLevel: 'strict', theme: currentTheme() })
-            initializedTheme = currentTheme()
-            hub.patch({ library: 'ready' })
-            return lib
-          } catch {
-            // The next mirror is tried before the session gives up.
-          }
+        const lib = typeof mermaidLibrary === 'function' ? mermaidLibrary() : null
+        if (lib === null || typeof lib.initialize !== 'function' || typeof lib.render !== 'function') {
+          hub.patch({ library: 'unavailable' })
+          return null
         }
-        hub.patch({ library: 'unavailable' })
-        return null
+        lib.initialize({ startOnLoad: false, securityLevel: 'strict', theme: currentTheme() })
+        initializedTheme = currentTheme()
+        hub.patch({ library: 'ready' })
+        return lib
       })()
       return mermaidPromise
     }
@@ -319,16 +296,6 @@ window.__ModuleLoader__.load({
       // An unterminated fence still renders, so an open mermaid one is kept.
       if (collecting === true) sources.push(collected.join('\n').replace(/\s+$/, ''))
       return sources
-    }
-
-    /**
-     * Whether a file path names a Markdown file this renderer claims.
-     *
-     * @param {string} path - the absolute path the document toolbar knows.
-     * @returns {boolean} whether the path ends in a claimed suffix.
-     */
-    function isMarkdownPath(path) {
-      return typeof path === 'string' && /\.(?:md|markdown)$/i.test(path)
     }
 
     /**
@@ -540,8 +507,8 @@ window.__ModuleLoader__.load({
      * Render one tracked block's diagram off the render queue.
      *
      * Everything asynchronous re-checks the token before it writes: a second
-     * pass over the same block, a mode switch, or the block leaving the page
-     * must not let a stale render overwrite newer state.
+     * pass over the same block, a config turn-off, or the block leaving the
+     * page must not let a stale render overwrite newer state.
      *
      * @param {object} record - the tracked block.
      * @param {string} source - the mermaid source.
@@ -634,7 +601,7 @@ window.__ModuleLoader__.load({
         if (block.isConnected === false) tracked.delete(block)
       }
       const state = hub.snapshot()
-      const sources = state.enabled === true && state.mode === 'diagram' && job.eof === true
+      const sources = state.enabled === true && job.eof === true
         ? scanMermaidBlocks(job.text)
         : []
       const wanted = new Map()
@@ -719,7 +686,7 @@ window.__ModuleLoader__.load({
           observer.disconnect()
           window.clearTimeout(timer)
         }
-      }, [content?.text, content?.eof, snap.enabled, snap.mode, snap.library, snap.themeEpoch, t])
+      }, [content?.text, content?.eof, snap.enabled, snap.library, snap.themeEpoch, t])
       if (content?.kind !== 'text') return null
       // This mount renders `git-panel-*` class names, so it carries its own
       // copy of the stylesheet, like every other mount.
@@ -733,58 +700,6 @@ window.__ModuleLoader__.load({
           labels,
           pathImages,
         }),
-      )
-    }
-
-    /**
-     * The path-row cell that switches one preview between diagram and source.
-     *
-     * Registered on the document toolbar's contribution list, so it stands
-     * with the preview's own controls once the file's Host path is known. It
-     * renders for Markdown files while the configuration has the feature on,
-     * and both halves stay in step through the hub rather than a prop.
-     *
-     * @param {object} props - the toolbar cell's inputs, including the file's absolute path and the injected translate.
-     * @returns {object|null} the two-segment control, or nothing where it does not apply.
-     */
-    function MermaidToggleAction(props) {
-      const t = typeof props?.t === 'function' ? props.t : boundTranslate
-      const absolutePath = typeof props?.absolutePath === 'string' ? props.absolutePath : ''
-      const [snap, setSnap] = React.useState(() => hub.snapshot())
-      React.useEffect(() => {
-        setSnap(hub.snapshot())
-        return hub.subscribe(() => setSnap(hub.snapshot()))
-      }, [])
-      if (snap.enabled !== true) return null
-      if (isMarkdownPath(absolutePath) === false) return null
-      return h(
-        React.Fragment,
-        null,
-        h(StyleTag, null),
-        h(
-          'div',
-          { className: 'git-panel-mermaid-toggle', role: 'group', 'aria-label': t('mermaid.toggle.label') },
-          h(
-            'button',
-            {
-              type: 'button',
-              'aria-pressed': String(snap.mode === 'diagram'),
-              title: t('mermaid.mode.diagram'),
-              onClick: () => hub.patch({ mode: 'diagram' }),
-            },
-            t('mermaid.mode.diagram'),
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              'aria-pressed': String(snap.mode === 'source'),
-              title: t('mermaid.mode.source'),
-              onClick: () => hub.patch({ mode: 'source' }),
-            },
-            t('mermaid.mode.source'),
-          ),
-        ),
       )
     }
 
@@ -846,7 +761,6 @@ window.__ModuleLoader__.load({
       hub,
       bodyId: MERMAID_BODY_ID,
       MermaidMarkdownBody,
-      MermaidToggleAction,
       scanMermaidBlocks,
       loadMermaid,
       markdownImageUrl,

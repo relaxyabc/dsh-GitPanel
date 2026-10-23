@@ -2019,8 +2019,8 @@ const MERMAID_RENDER_NODE = makeSchemaNode({
     default: true,
     volatile: true,
     description: {
-      '': 'Renders mermaid code blocks in Markdown file previews as diagrams. The Mermaid library loads from a public CDN on first use, so an offline session keeps showing the fenced source.',
-      zh: '把 Markdown 文件预览中的 mermaid 代码块渲染成图。Mermaid 库在首次使用时从公共 CDN 加载,离线时保持显示源码。',
+      '': 'Renders mermaid code blocks in Markdown file previews as diagrams. The Mermaid library ships with the plugin, so rendering needs no internet access.',
+      zh: '把 Markdown 文件预览中的 mermaid 代码块渲染成图。Mermaid 库随插件内置,无需联网。',
     },
   },
 })
