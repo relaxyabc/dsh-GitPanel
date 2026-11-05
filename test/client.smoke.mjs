@@ -1664,6 +1664,27 @@ branchRow?.props?.onContextMenu?.({ preventDefault: () => {}, clientX: 40, clien
 view = await settle(view)
 check(view.text().includes('Checkout fix/rename-docs'), 'the branch menu offers a checkout', view.text().slice(-24))
 check(view.text().includes('Delete branch'), 'the branch menu offers a delete')
+check(view.text().includes('Rename branch'), 'the branch menu offers a rename')
+
+// The rename dialog starts from the branch's own name, so renaming is an edit
+// of one prefilled field rather than a retype. The harness rebuilds a nested
+// component's hooks per render (see the disclosure note above), so an edit
+// typed here would not survive to the confirm click; confirming the prefilled
+// name is the user path the harness can drive, and Git answers an unchanged
+// name as the successful no-op it is.
+const renameMenuItem = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rename branch')
+check(renameMenuItem !== undefined && renameMenuItem.props?.disabled !== true, 'a branch can be renamed from its menu', renameMenuItem?.props)
+renameMenuItem?.props?.onClick?.()
+view = await settle(view)
+const renameDialogBox = find(view.tree, (element) => element.type === 'textarea' && element.props?.value === 'fix/rename-docs')
+check(renameDialogBox !== undefined, 'the rename dialog starts from the current name', renameDialogBox?.props)
+requests.length = 0
+find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Rename branch')?.props?.onClick?.()
+await settle(view)
+const renameRequest = requests.find((entry) => entry.op === 'renameBranch')
+check(renameRequest?.args?.name === 'fix/rename-docs' && renameRequest?.args?.newName === 'fix/rename-docs', 'confirming the rename sends the old and the new name', renameRequest?.args)
+check(renameRequest?.args?.path === WORKSPACE + '/app', 'renaming targets the selected repository', renameRequest?.args)
+check(requests.some((entry) => entry.op === 'state'), 'the branch list is re-read after the rename', requests.map((entry) => entry.op))
 
 const commitContextRow = find(
   view.tree,

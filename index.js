@@ -11,9 +11,9 @@
  * Reads are `repos`, `state`, `log`, `logCount`, `commitFiles`,
  * `commitMessage`, `commitTemplate`, and `diff`; writes are `stage`,
  * `unstage`, `commit`, `push`, `fetch`, `pull`,
- * `checkout`, `deleteBranch`, `reset`, `cherryPick`, `revert`, `amend`,
- * `merge`, `rebase`, `mergeAbort`, `rebaseAbort`, `rebaseContinue`,
- * `submodule`, `deleteFile`, and `revealFile`.
+ * `checkout`, `deleteBranch`, `renameBranch`, `reset`, `cherryPick`,
+ * `revert`, `amend`, `merge`, `rebase`, `mergeAbort`, `rebaseAbort`,
+ * `rebaseContinue`, `submodule`, `deleteFile`, and `revealFile`.
  * The plugin Config holds the repository discovery depth, the whole-file diff
  * switch, and the two preview switches; all are plain fields the Plugins page
  * edits through the Host settings service.
@@ -1170,6 +1170,29 @@ async function writeDeleteBranch(repositoryPath, args) {
 }
 
 /**
+ * Rename a local branch.
+ *
+ * The names go behind `--` even though `requireBareRef` already refuses
+ * option-shaped values: the guard keeps a caller from choosing what `git
+ * branch` parses, and the separator keeps that defence local to this command
+ * instead of resting on one shared helper. No force variant is offered —
+ * `--move` refuses an existing target, and silently overwriting a branch is
+ * not something a context menu should be able to do; the refusal comes back
+ * as data. Git moves HEAD with the branch, so renaming the checked-out one
+ * is the ordinary case.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @param {object} args - request arguments.
+ * @returns {Promise<object>} the branch's new name and git's report.
+ */
+async function writeRenameBranch(repositoryPath, args) {
+  const name = requireBareRef(args.name)
+  const newName = requireBareRef(args.newName)
+  const output = await gitOrThrow(repositoryPath, ['branch', '--move', '--', name, newName])
+  return { name: newName, summary: output.trim() }
+}
+
+/**
  * Move HEAD to another commit, optionally keeping or discarding local state.
  *
  * @param {string} repositoryPath - absolute repository path.
@@ -1700,6 +1723,13 @@ const WRITE_OPERATIONS = {
    * @returns {Promise<object>} git's report.
    */
   deleteBranch: (args) => writeDeleteBranch(resolveInside(args.workspaceRoot, args.path), args),
+  /**
+   * Rename a local branch.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the branch's new name.
+   */
+  renameBranch: (args) => writeRenameBranch(resolveInside(args.workspaceRoot, args.path), args),
   /**
    * Move HEAD to another commit.
    *

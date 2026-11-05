@@ -506,6 +506,32 @@ try {
   const deletedNow = await call('deleteBranch', { workspaceRoot: root, path: 'alpha', name: 'from-main' })
   check(deletedNow.body.ok === true, 'deleteBranch succeeds once the branch is not checked out', deletedNow.body)
 
+  // A rename only moves the ref: the checked-out branch is the ordinary case,
+  // because Git moves HEAD along with it and the branch list follows.
+  const forRename = await call('checkout', { workspaceRoot: root, path: 'alpha', name: 'rename-me', create: true, startPoint: 'main' })
+  check(forRename.body.ok === true, 'checkout -b creates the branch to rename', forRename.body)
+  const renamed = await call('renameBranch', { workspaceRoot: root, path: 'alpha', name: 'rename-me', newName: 'renamed-branch' })
+  check(renamed.body.ok === true, 'renameBranch succeeds on the checked-out branch', renamed.body)
+  check(renamed.body.data?.name === 'renamed-branch', 'renameBranch reports the new name', renamed.body.data)
+  const afterRename = (await call('state', { workspaceRoot: root, path: 'alpha' })).body.data
+  check(afterRename.branch === 'renamed-branch', 'renaming moves HEAD with the branch', afterRename.branch)
+  check(
+    afterRename.branches.some((entry) => entry.name === 'renamed-branch' && entry.current === true) && !afterRename.branches.some((entry) => entry.name === 'rename-me'),
+    'the branch list carries the new name and drops the old one',
+    afterRename.branches.map((entry) => entry.name),
+  )
+  // Everything the caller can put into either name's argv element is refused
+  // when it is shaped like an option, and Git's own refusal of a taken name is
+  // data rather than a crash.
+  check((await call('renameBranch', { workspaceRoot: root, path: 'alpha', name: 'renamed-branch', newName: 'feature/x' })).body.ok === false, 'renaming onto an existing branch is refused')
+  check((await call('renameBranch', { workspaceRoot: root, path: 'alpha', name: 'renamed-branch', newName: '--force' })).body.ok === false, 'an option-shaped new name is refused')
+  check((await call('renameBranch', { workspaceRoot: root, path: 'alpha', name: '--force', newName: 'renamed-branch' })).body.ok === false, 'an option-shaped old name is refused')
+  check((await call('renameBranch', { workspaceRoot: root, path: 'alpha' })).body.ok === false, 'renameBranch without the old name is refused')
+  check((await call('renameBranch', { workspaceRoot: root, path: 'alpha', name: 'renamed-branch' })).body.ok === false, 'renameBranch without the new name is refused')
+  await call('checkout', { workspaceRoot: root, path: 'alpha', name: 'main' })
+  const droppedRenamed = await call('deleteBranch', { workspaceRoot: root, path: 'alpha', name: 'renamed-branch' })
+  check(droppedRenamed.body.ok === true, 'the renamed branch is still an ordinary branch', droppedRenamed.body)
+
   // ---- cherry-pick --------------------------------------------------------------
   console.log('\ncherry-pick')
   const featureHash = (await call('log', { workspaceRoot: root, path: 'alpha', limit: 10, branch: 'feature/x' })).body.data.commits.find(

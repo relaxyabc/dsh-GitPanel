@@ -66,7 +66,7 @@
 
 **分支**
 - 本地 / 远程分组、可折叠、可按名称过滤;当前分支带 `HEAD` 标记,显示上游与最新提交说明。
-- 右键或双击:Checkout 分支、从远程分支建本地分支、删除分支(默认安全删除)、从任意提交 New branch from here。
+- 右键或双击:Checkout 分支、从远程分支建本地分支、删除分支(默认安全删除)、重命名分支(对话框预填当前名;当前检出的分支会随 HEAD 一起改名,目标名已存在时由 Git 拒绝)、从任意提交 New branch from here。
 - 分支右键菜单的 **Merge into <当前分支>** 把该分支并入当前分支(合并提交的信息在对话框里预填,可直接编辑),**Rebase <当前分支> onto this branch** 把当前分支重放到该分支上。二者都先弹确认框(说明工作区必须干净、rebase 会重写提交),**冲突**时 Git 停下来,面板显示黄色横幅,并给出分支里实际执行的命令按钮:**Commit merge** / **Merge --abort**,或 **Rebase --continue** / **Rebase --abort**;冲突文件与普通改动一样列在工作区里,解决后 stage 即可。
 
 **提交历史与 diff**
@@ -142,6 +142,7 @@ POST /api/local-git
 | `push` / `fetch` / `pull` | 写 | 推送 / 只下载对象与远程跟踪引用 / 把上游整合进工作区 |
 | `checkout` | 写 | checkout 分支或提交,可顺带新建分支 |
 | `deleteBranch` | 写 | 删除本地分支(默认安全删除) |
+| `renameBranch` | 写 | 重命名本地分支(`git branch --move`;改名到已存在的分支会被 Git 拒绝,已检出的分支随 HEAD 一起改名) |
 | `reset` / `cherryPick` / `revert` | 写 | reset --soft/--mixed/--hard / cherry-pick 一个提交 / 用新提交 revert |
 | `amend` | 写 | 改写最新提交的信息 |
 | `merge` | 写 | 把指定分支并入当前分支(`--no-ff` / `--ff-only` / `--squash` / `--no-commit`;会提交时必须带信息) |

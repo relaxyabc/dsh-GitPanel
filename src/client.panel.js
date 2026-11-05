@@ -1040,6 +1040,25 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * Rename one local branch.
+       *
+       * The dialog hands over raw text, so an empty field is a no-op the way
+       * the merge dialog treats an empty message. An unchanged name still
+       * reaches Git: `git branch -m` answers renaming a branch to its own name
+       * with success, and it is Git — not this wrapper — that refuses a name
+       * it will not take, such as one a branch already holds.
+       *
+       * @param {string} name - the branch to rename.
+       * @param {string} value - the new name typed into the dialog.
+       * @returns {Promise<void>} nothing.
+       */
+      async function renameBranchTo(name, value) {
+        const newName = String(value ?? '').trim()
+        if (newName === '') return
+        await mutate('renameBranch', { name, newName }, fill(t('notice.renamed'), { name, to: newName }))
+      }
+
+      /**
        * Build the branch context-menu rows.
        *
        * @param {object} branch - the branch under the pointer.
@@ -1094,6 +1113,17 @@ window.__ModuleLoader__.load({
           mergeItem,
           rebaseItem,
           { separator: true },
+          {
+            label: t('renameBranch'),
+            run: () =>
+              setDialog({
+                title: t('renameBranch'),
+                text: branch.name,
+                input: branch.name,
+                confirm: t('renameBranch'),
+                run: (value) => renameBranchTo(branch.name, value),
+              }),
+          },
           {
             label: t('deleteBranch'),
             disabled: branch.current === true,
