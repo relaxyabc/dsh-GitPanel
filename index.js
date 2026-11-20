@@ -9,8 +9,8 @@
  * shipped API bridge; it is never a bare unauthenticated webserver route.
  *
  * Reads are `repos`, `state`, `log`, `logCount`, `commitFiles`,
- * `commitMessage`, `commitTemplate`, and `diff`; writes are `stage`,
- * `unstage`, `commit`, `push`, `fetch`, `pull`,
+ * `commitMessage`, `commitTemplate`, `recentBranches`, and `diff`; writes are
+ * `stage`, `unstage`, `commit`, `push`, `fetch`, `pull`,
  * `checkout`, `deleteBranch`, `renameBranch`, `reset`, `cherryPick`,
  * `revert`, `amend`, `merge`, `rebase`, `mergeAbort`, `rebaseAbort`,
  * `rebaseContinue`, `submodule`, `deleteFile`, and `revealFile`.
@@ -156,6 +156,18 @@ const COMMIT_TEMPLATE_FALLBACK = '.gitcommit'
 
 /** Largest commit template accepted, in bytes; a bigger file is not a template. */
 const MAX_TEMPLATE_BYTES = 1024 * 1024
+
+/**
+ * Reflog entries scanned when listing the recently checked-out branches.
+ *
+ * `git reflog show HEAD` reads `.git/logs/HEAD` alone — no working-tree or
+ * object-graph walk — so a bounded tail of it stays a millisecond-scale read
+ * even on a repository that is checked out a hundred times a day.
+ */
+const RECENT_REFLOG_LIMIT = 200
+
+/** Branches kept in the recent list, newest first. */
+const MAX_RECENT_BRANCHES = 10
 
 /** Record separator separating two commit records in `git log` output. */
 const RS = '\u001e'
@@ -600,6 +612,32 @@ function parseBranches(raw, remote) {
 }
 
 /**
+ * Parse HEAD's reflog into the recently checked-out branch names.
+ *
+ * A branch checkout writes `checkout: moving from A to B`; B read newest first
+ * with duplicates dropped is the list the log filter calls recent — the same
+ * source IDEA's branch filter reads. Detached moves never name a branch — Git
+ * records the target as `HEAD` or as the raw commit hash — and are dropped; a
+ * name the repository no longer carries is left in and filtered out by the
+ * caller, which already knows the branch list.
+ *
+ * @param {string} raw - the reflog subjects, one per line, newest first.
+ * @returns {string[]} branch names, newest checked-out first.
+ */
+function parseReflogBranches(raw) {
+  const names = []
+  for (const line of raw.split('\n')) {
+    const match = /^checkout: moving from .* to (.+)$/.exec(line.trim())
+    if (match === null) continue
+    const name = match[1]
+    if (name === '' || name === 'HEAD' || /^[0-9a-f]{7,40}$/i.test(name) === true || names.includes(name)) continue
+    names.push(name)
+    if (names.length >= MAX_RECENT_BRANCHES) break
+  }
+  return names
+}
+
+/**
  * Parse `git submodule status` output.
  *
  * @param {string} raw - the status output.
@@ -949,6 +987,27 @@ async function readCommitTemplate(repositoryPath) {
     }
   }
   return { template: '' }
+}
+
+/**
+ * Read the branches recently checked out, from HEAD's reflog.
+ *
+ * The log filter's "recent" section is the same convenience IDEA reads from its
+ * index: the branches this checkout has visited, newest first. The read is the
+ * cheap `git reflog show HEAD` tail, and the client intersects the answer with
+ * the branch list it already holds, so names of branches deleted since the
+ * checkout disappear instead of dead-ending the filter.
+ *
+ * A repository without a usable reflog — reflog writes disabled, or a freshly
+ * created `.git` that has none yet — answers an empty list rather than an
+ * error: the section is a convenience the panel hides, not a state to report.
+ *
+ * @param {string} repositoryPath - absolute repository path.
+ * @returns {Promise<{branches: string[]}>} recently checked-out branch names, newest first.
+ */
+async function readRecentBranches(repositoryPath) {
+  const raw = await runGit(repositoryPath, ['reflog', 'show', `--max-count=${RECENT_REFLOG_LIMIT}`, '--format=%gs', 'HEAD'])
+  return { branches: raw.ok ? parseReflogBranches(raw.stdout) : [] }
 }
 
 /**
@@ -1624,6 +1683,17 @@ const READ_OPERATIONS = {
   async commitTemplate(args) {
     const repositoryPath = resolveInside(args.workspaceRoot, args.path)
     return readCommitTemplate(repositoryPath)
+  },
+
+  /**
+   * Read the branches recently checked out, from HEAD's reflog.
+   *
+   * @param {object} args - request arguments.
+   * @returns {Promise<object>} the recent branch names, newest first.
+   */
+  async recentBranches(args) {
+    const repositoryPath = resolveInside(args.workspaceRoot, args.path)
+    return readRecentBranches(repositoryPath)
   },
   /**
    * Read the paths one commit changed.

@@ -425,7 +425,10 @@ function matchingHistory(args) {
 let staleHost = false
 
 /** The operations a Host build without the newest additions does not know. */
-const NEWER_OPERATIONS = ['commitFiles', 'commitTemplate', 'discoveryDepth', 'deleteFile', 'revealFile']
+const NEWER_OPERATIONS = ['commitFiles', 'commitTemplate', 'discoveryDepth', 'deleteFile', 'revealFile', 'recentBranches']
+
+/** The recently checked-out branches the fake Host's reflog read answers. */
+let serverRecentBranches = ['main', 'origin/main']
 
 /**
  * Answer one Host operation.
@@ -484,6 +487,9 @@ function answerFor(request) {
   }
   if (request.op === 'logCount') {
     return { total: matchingHistory(request.args).length }
+  }
+  if (request.op === 'recentBranches') {
+    return { branches: serverRecentBranches }
   }
   if (request.op === 'commitMessage') {
     const commit = serverHistory.find((entry) => entry.hash === request.args?.commit)
@@ -1587,6 +1593,116 @@ rangeSelect?.props?.onChange?.({ target: { value: '' } })
 view = await settle(view)
 check(findAll(view.tree, (element) => element.type === 'input' && element.props?.type === 'date').every((input) => input.props?.value === ''), 'all time clears both bounds')
 check(view.text().includes('feat: greet the world') && view.text().includes('chore: scaffold'), 'all time restores the whole page')
+
+console.log('\nhistory branch filter')
+const historyBranchChip = find(view.tree, (element) => element.type === 'button' && element.props?.['aria-label'] === 'Filter by branch')
+check(historyBranchChip !== undefined, 'the history filter offers a branch chip')
+check(collectText(historyBranchChip).join('').includes('HEAD'), 'the chip names HEAD while no branch is picked', collectText(historyBranchChip))
+requests.length = 0
+historyBranchChip?.props?.onClick?.({ currentTarget: { getBoundingClientRect: () => ({ left: 12, bottom: 40 }) } })
+view = await settle(view)
+const branchMenuElement = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu')
+check(branchMenuElement !== undefined, 'the chip opens the branch popup')
+check(requests.some((entry) => entry.op === 'recentBranches'), 'opening the popup reads the recent branches from the Host', requests.map((entry) => entry.op))
+const branchPopupText = collectText(branchMenuElement)
+check(branchPopupText.includes('Recent') && branchPopupText.includes('Favorites') && branchPopupText.includes('Local'), 'the popup shows the recent, favorites and local sections', branchPopupText)
+check(branchPopupText.includes('origin'), 'the popup groups the remote branches under their remote', branchPopupText)
+check(branchPopupText.includes('fix/rename-docs') && branchPopupText.includes('origin/main'), 'the popup lists the local and the remote branches', branchPopupText)
+// The first open seeds the favorites the way IDEA seeds its log filter: the
+// checked-out branch, then master and origin/master, each only when it exists.
+check(branchPopupText.filter((entry) => entry === 'main').length >= 2, 'the first open seeds the checked-out branch as a favorite', branchPopupText)
+const topicStar = find(branchMenuElement, (element) => element.props?.['aria-label'] === 'Mark as favorite topic')
+check(topicStar !== undefined, 'every branch row offers a favorite star')
+topicStar?.props?.onClick?.({ stopPropagation: () => {} })
+view = await settle(view)
+const starredMenuElement = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu')
+check(find(starredMenuElement, (element) => element.props?.['aria-label'] === 'Remove from favorites topic') !== undefined, 'starring a branch flips its star')
+check(collectText(starredMenuElement).filter((entry) => entry === 'topic').length >= 2, 'a starred branch joins the favorites section above its own group')
+const pickRow = find(starredMenuElement, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-branch-menu-name') && collectText(element).includes('fix/rename-docs'))
+check(pickRow !== undefined, 'a branch row is clickable')
+requests.length = 0
+pickRow?.props?.onClick?.()
+view = await settle(view)
+check(find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu') === undefined, 'picking a branch closes the popup')
+const pickedChip = find(view.tree, (element) => element.type === 'button' && element.props?.['aria-label'] === 'Filter by branch')
+check(collectText(pickedChip).join('').includes('fix/rename-docs'), 'the chip names the picked branch', collectText(pickedChip))
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.branch === 'fix/rename-docs'),
+  'a picked branch is a query the Host is asked, not a pass over the loaded page',
+  requests.filter((entry) => entry.op === 'log').map((entry) => entry.args),
+)
+check(
+  requests.some((entry) => entry.op === 'logCount' && entry.args?.branch === 'fix/rename-docs'),
+  'the count measures the same branch',
+  requests.filter((entry) => entry.op === 'logCount').map((entry) => entry.args),
+)
+// Reopen and narrow: the search box filters every section at once.
+pickedChip?.props?.onClick?.({ currentTarget: { getBoundingClientRect: () => ({ left: 12, bottom: 40 }) } })
+view = await settle(view)
+const reopenedMenu = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu')
+const menuSearch = find(reopenedMenu, (element) => element.type === 'input' && element.props?.placeholder === 'Filter branches')
+check(menuSearch !== undefined, 'the popup offers a search box')
+menuSearch?.props?.onChange?.({ target: { value: 'rename' } })
+view = await settle(view)
+const narrowedMenu = find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu')
+const narrowedText = collectText(narrowedMenu)
+check(narrowedText.includes('fix/rename-docs') && !narrowedText.includes('topic') && !narrowedText.includes('origin/main'), 'the popup search narrows every section', narrowedText)
+find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-scrim')?.props?.onClick?.()
+view = await settle(view)
+check(find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className === 'git-panel-branch-menu') === undefined, 'the scrim closes the popup without picking')
+requests.length = 0
+const clearAll = find(view.tree, (element) => element.type === 'button' && collectText(element).join('') === 'Clear filters')
+check(clearAll !== undefined, 'the branch filter joins the clearable filters')
+clearAll?.props?.onClick?.()
+view = await settle(view)
+check(
+  requests.some((entry) => entry.op === 'log' && entry.args?.branch === undefined),
+  'clearing the filters returns the history to HEAD',
+  requests.filter((entry) => entry.op === 'log').map((entry) => entry.args),
+)
+const resetChip = find(view.tree, (element) => element.type === 'button' && element.props?.['aria-label'] === 'Filter by branch')
+check(collectText(resetChip).join('').includes('HEAD'), 'clearing the filters returns the chip to HEAD')
+const branchStyleTag = find(view.tree, (element) => element.type === 'style')
+const branchCss = Array.isArray(branchStyleTag?.children) ? branchStyleTag.children.flat().join('') : ''
+check(
+  branchCss.includes('.git-panel-branch-menu{') && branchCss.includes('.git-panel-branch-filter{'),
+  'the branch popup and the chip carry the stylesheet their classes need',
+  branchCss.slice(branchCss.indexOf('.git-panel-branch'), branchCss.indexOf('.git-panel-branch') + 80),
+)
+
+console.log('\ncolumn splitters')
+const findSplitters = () => findAll(view.tree, (element) => element.props?.role === 'separator' && typeof element.props?.className === 'string' && element.props.className.includes('git-panel-splitter'))
+const findLeftColumn = () => find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-col-left'))
+const findRightColumn = () => find(view.tree, (element) => typeof element.props?.className === 'string' && element.props.className.includes('git-panel-col-right'))
+check(findSplitters().length === 2, 'the tool offers a splitter on each column boundary', findSplitters().length)
+check(findLeftColumn()?.props?.style?.width === undefined, 'the columns start at the stylesheet width')
+// One down + one move inside a single render pass: the drag start lives in a
+// ref, which the harness keeps for the pass like the real React does for the
+// whole drag.
+findSplitters()[0]?.props?.onPointerDown?.({ clientX: 100, pointerId: 1, preventDefault: () => {}, currentTarget: {} })
+findSplitters()[0]?.props?.onPointerMove?.({ clientX: 180 })
+view = await settle(view)
+check(findLeftColumn()?.props?.style?.width === 400, 'dragging the left splitter widens the left column', findLeftColumn()?.props?.style)
+findSplitters()[0]?.props?.onPointerDown?.({ clientX: 100, pointerId: 1, preventDefault: () => {}, currentTarget: {} })
+findSplitters()[0]?.props?.onPointerMove?.({ clientX: 2000 })
+view = await settle(view)
+check(findLeftColumn()?.props?.style?.width === 640, 'a drag past the bound clamps to the cap', findLeftColumn()?.props?.style)
+const rightSplitters = findSplitters()
+check(rightSplitters[1] !== undefined, 'the second splitter is the right boundary')
+rightSplitters[1]?.props?.onPointerDown?.({ clientX: 500, pointerId: 1, preventDefault: () => {}, currentTarget: {} })
+rightSplitters[1]?.props?.onPointerMove?.({ clientX: 460 })
+view = await settle(view)
+check(findRightColumn()?.props?.style?.width === 440, 'dragging the right splitter leftward widens the right column', findRightColumn()?.props?.style)
+findSplitters()[0]?.props?.onDoubleClick?.()
+view = await settle(view)
+check(findLeftColumn()?.props?.style?.width === undefined, 'double-clicking a splitter restores the default width')
+const splitterStyleTag = find(view.tree, (element) => element.type === 'style')
+const splitterCss = Array.isArray(splitterStyleTag?.children) ? splitterStyleTag.children.flat().join('') : ''
+check(
+  splitterCss.includes('.git-panel-splitter{') && splitterCss.includes('.git-panel-splitter-drag::before'),
+  'the splitters carry the stylesheet their classes need',
+  splitterCss.slice(splitterCss.indexOf('.git-panel-splitter'), splitterCss.indexOf('.git-panel-splitter') + 80),
+)
 
 console.log('\ncommit selection')
 requests.length = 0

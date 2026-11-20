@@ -12,10 +12,17 @@ window.__ModuleLoader__.load({
   chunk: 'client.history.js',
   factory: () => ({ create: (shared) => {
     const {
-      h, React, cx, absoluteDate, commitTime, commitMessageParts, fill, DOT_GLYPH, DASH,
+      h, React, cx, boundTranslate, absoluteDate, commitTime, commitMessageParts, fill, DOT_GLYPH, DASH,
+      CARET_OPEN, STAR_GLYPH, STAR_OPEN_GLYPH,
       HISTORY_ROW_HEIGHT, HISTORY_WINDOW_OVERSCAN,
       rows: { CommitRow },
     } = shared
+
+    /** Width of the branch filter popup, in pixels. */
+    const BRANCH_MENU_WIDTH = 280
+
+    /** Room kept between the popup and the window edge, in pixels. */
+    const BRANCH_MENU_MARGIN = 8
 
     /**
      * The right column: the commit message box, then the selected commit's files.
@@ -26,7 +33,7 @@ window.__ModuleLoader__.load({
     function CommitColumn(props) {
       const {
         commitFiles, commitMessageMenu, filesError, filesLoading, openDiff, selectedCommit, selectedFile,
-        setMenu, setSelectedFile, t,
+        setMenu, setSelectedFile, t, width,
       } = props
       // The raw message keeps the newlines the folded subject lost, so the
       // detail head splits it again: the first line bold, the rest below.
@@ -34,7 +41,12 @@ window.__ModuleLoader__.load({
       return (
         h(
           'div',
-          { className: cx('git-panel-col', 'git-panel-col-right') },
+          {
+            className: cx('git-panel-col', 'git-panel-col-right'),
+            // A splitter drag carries the width inline; without one the
+            // stylesheet's default stands.
+            style: typeof width === 'number' ? { width } : undefined,
+          },
           selectedCommit === null
             ? h(
                 React.Fragment,
@@ -195,6 +207,223 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * One branch row of the branch filter popup: the favorite star, then the
+     * branch name, with the checked-out one tagged the way the branch column
+     * tags it.
+     *
+     * @param {object} props - row inputs.
+     * @param {string} props.name - the full branch name.
+     * @param {boolean} props.current - whether the branch is checked out.
+     * @param {boolean} props.favorite - whether the branch is starred.
+     * @param {boolean} props.selected - whether this branch is the active filter.
+     * @param {Function} props.onPick - called with the branch name on click.
+     * @param {Function} props.onToggleFavorite - called with the branch name when the star is used.
+     * @param {Function} props.t - the translator.
+     * @returns {object} the row element.
+     */
+    function BranchMenuRow({ name, current, favorite, selected, onPick, onToggleFavorite, t }) {
+      return h(
+        'div',
+        { className: 'git-panel-branch-menu-item' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'git-panel-branch-menu-star',
+            title: t(favorite === true ? 'branchFilter.unstar' : 'branchFilter.star'),
+            'aria-label': `${t(favorite === true ? 'branchFilter.unstar' : 'branchFilter.star')} ${name}`,
+            'aria-pressed': favorite === true,
+            onClick: (event) => {
+              event.stopPropagation()
+              onToggleFavorite(name)
+            },
+          },
+          h('span', { className: favorite === true ? 'git-panel-branch-menu-star-on' : undefined }, favorite === true ? STAR_GLYPH : STAR_OPEN_GLYPH),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: cx('git-panel-branch-menu-name', selected === true ? 'git-panel-row-sel' : false),
+            title: name,
+            onClick: () => onPick(name),
+          },
+          current === true ? h('span', { className: 'git-panel-tag' }, 'HEAD') : null,
+          h('span', { className: 'git-panel-branch' }, name),
+        ),
+      )
+    }
+
+    /**
+     * The branch filter popup, the one IDEA's Git log opens from its filter bar.
+     *
+     * A search box filters every list below it; HEAD stands first as the default
+     * walk, then the sections in the order IDEA shows them: the branches this
+     * checkout recently visited, the starred favorites, the local branches, and
+     * one group per remote. Rows are picked with a click and starred with their
+     * star; the popup closes on the scrim, on Escape, and on a pick.
+     *
+     * The lists arrive through props — the panel owns the repository data, the
+     * favorites and the recent read — so this stays a pure function of them and
+     * of its own search box.
+     *
+     * @param {object} props - popup inputs.
+     * @param {{left: number, top: number}} props.anchor - the chip rectangle the popup hangs from.
+     * @param {Array<object>} props.branches - the local branch rows.
+     * @param {Array<object>} props.remotes - the remote-tracking branch rows.
+     * @param {string|null} props.currentBranch - the checked-out branch, null when detached.
+     * @param {string[]} props.favorites - the starred branch names, in display order.
+     * @param {string[]|null} props.recent - the recently checked-out names, newest first; null until read.
+     * @param {string} props.search - the popup's search box value, owned by the panel.
+     * @param {Function} props.onSearch - updates the search box value.
+     * @param {string} props.selected - the branch the filter points at, empty for HEAD.
+     * @param {Function} props.onPick - called with the picked branch name, empty for HEAD.
+     * @param {Function} props.onToggleFavorite - called with the starred branch name.
+     * @param {Function} props.onClose - closes the popup.
+     * @param {Function} [props.t] - the translator.
+     * @returns {object} the popup element.
+     */
+    function BranchFilterMenu({ anchor, branches, remotes, currentBranch, favorites, recent, search, onSearch, selected, onPick, onToggleFavorite, onClose, t = boundTranslate }) {
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') onClose()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [onClose])
+
+      const needle = search.trim().toLowerCase()
+      /** Whether one branch name survives the search box. */
+      const named = (name) => needle === '' || name.toLowerCase().includes(needle)
+      // A name the repository no longer carries must not dead-end the filter,
+      // so every section intersects with what exists; the recent read especially
+      // names branches the reflog remembers but the checkout may have deleted.
+      const exists = new Set([...branches, ...remotes].map((branch) => branch.name))
+      const headShown = needle === '' || 'head'.includes(needle) === true
+      const recentNames = (Array.isArray(recent) ? recent : []).filter((name) => named(name) === true && exists.has(name) === true)
+      const favoriteNames = (Array.isArray(favorites) ? favorites : []).filter((name) => named(name) === true && exists.has(name) === true)
+      const localNames = branches.filter((branch) => named(branch.name) === true).map((branch) => branch.name)
+      const remoteGroups = []
+      for (const branch of remotes) {
+        if (named(branch.name) === false) continue
+        const remote = branch.name.split('/')[0]
+        const group = remoteGroups.find((entry) => entry.remote === remote)
+        if (group === undefined) remoteGroups.push({ remote, names: [branch.name] })
+        else group.names.push(branch.name)
+      }
+      const nothingShown = headShown === false && recentNames.length === 0 && favoriteNames.length === 0 && localNames.length === 0 && remoteGroups.length === 0
+
+      const left = Math.max(BRANCH_MENU_MARGIN, Math.min(anchor.left, window.innerWidth - BRANCH_MENU_WIDTH - BRANCH_MENU_MARGIN))
+      const top = anchor.top + 6
+
+      /**
+       * One favorite star's state for a branch name.
+       *
+       * @param {string} name - the branch.
+       * @returns {boolean} whether it is starred.
+       */
+      const starred = (name) => Array.isArray(favorites) === true && favorites.includes(name) === true
+
+      return h(
+        React.Fragment,
+        null,
+        h('div', { className: 'git-panel-scrim', onClick: onClose, onContextMenu: (event) => { event.preventDefault(); onClose() } }),
+        h(
+          'div',
+          { className: 'git-panel-branch-menu', style: { left, top, width: BRANCH_MENU_WIDTH } },
+          h('input', {
+            className: 'git-panel-input git-panel-branch-menu-search',
+            value: search,
+            placeholder: t('branchesFilter'),
+            title: t('branchesFilter'),
+            'aria-label': t('branchesFilter'),
+            autoFocus: true,
+            onChange: (event) => onSearch(event.target.value),
+          }),
+          // HEAD first: picking it clears the branch filter and the history
+          // reads the checked-out state again, which is what it walked before
+          // any branch was chosen.
+          headShown === true
+            ? h(
+                'div',
+                { className: 'git-panel-branch-menu-item', key: 'head' },
+                h('span', { className: 'git-panel-branch-menu-spacer' }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: cx('git-panel-branch-menu-name', selected === '' ? 'git-panel-row-sel' : false),
+                    title: t('branchFilter.head.hint'),
+                    onClick: () => onPick(''),
+                  },
+                  h('span', { className: 'git-panel-branch' }, 'HEAD'),
+                ),
+              )
+            : null,
+          recentNames.length === 0 ? null : h('div', { className: 'git-panel-branch-menu-head' }, t('branchFilter.recent')),
+          recentNames.map((name) =>
+            h(BranchMenuRow, {
+              key: `recent-${name}`,
+              name,
+              current: name === currentBranch,
+              favorite: starred(name),
+              selected: selected === name,
+              onPick,
+              onToggleFavorite,
+              t,
+            }),
+          ),
+          favoriteNames.length === 0 ? null : h('div', { className: 'git-panel-branch-menu-head' }, t('branchFilter.favorites')),
+          favoriteNames.map((name) =>
+            h(BranchMenuRow, {
+              key: `fav-${name}`,
+              name,
+              current: name === currentBranch,
+              favorite: true,
+              selected: selected === name,
+              onPick,
+              onToggleFavorite,
+              t,
+            }),
+          ),
+          localNames.length === 0 ? null : h('div', { className: 'git-panel-branch-menu-head' }, t('local')),
+          localNames.map((name) =>
+            h(BranchMenuRow, {
+              key: `local-${name}`,
+              name,
+              current: name === currentBranch,
+              favorite: starred(name),
+              selected: selected === name,
+              onPick,
+              onToggleFavorite,
+              t,
+            }),
+          ),
+          remoteGroups.map((group) =>
+            h(
+              React.Fragment,
+              { key: `remote-${group.remote}` },
+              h('div', { className: 'git-panel-branch-menu-head' }, group.remote),
+              group.names.map((name) =>
+                h(BranchMenuRow, {
+                  key: `remote-${name}`,
+                  name,
+                  current: name === currentBranch,
+                  favorite: starred(name),
+                  selected: selected === name,
+                  onPick,
+                  onToggleFavorite,
+                  t,
+                }),
+              ),
+            ),
+          ),
+          nothingShown === true ? h('div', { className: 'git-panel-branch-menu-empty' }, t('branchFilter.none')) : null,
+        ),
+      )
+    }
+
+    /**
      * The middle column: the filter row above the commit history list.
      *
      * All three filters are local — the search matches the raw message or the
@@ -209,9 +438,9 @@ window.__ModuleLoader__.load({
      */
     function HistoryColumn(props) {
       const {
-        activeRange, applyQuickRange, autoLoading, capped, clearHistoryFilter, commitMenu, commits,
+        activeRange, applyQuickRange, autoLoading, branchFilter, branchMenuOpen, capped, clearHistoryFilter, commitMenu, commits,
         filteredCommits, historyFilter, historyFilterActive, loadMore, loadingMore, more, onLoadAll,
-        onRaiseCap, onScroll, onStopLoad, quickRanges, selectedCommit, setHistoryFilter, setMenu,
+        onRaiseCap, onScroll, onStopLoad, openBranchMenu, quickRanges, selectedCommit, setHistoryFilter, setMenu,
         setSelectedCommit, setSelectedFile, staleFilter, t, total, viewport,
       } = props
       const narrowed = filteredCommits.length !== commits.length
@@ -282,6 +511,28 @@ window.__ModuleLoader__.load({
                 'aria-label': t('historyFilter.search'),
                 onChange: (event) => setHistoryFilter((value) => ({ ...value, search: event.target.value })),
               }),
+              // The branch the history is walked from: HEAD until a branch is
+              // picked, the way IDEA's log filter reads before its first pick.
+              // The popup the chip opens is the panel's, rendered above every
+              // column; the chip only reports where it stands.
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: cx('git-panel-select', 'git-panel-branch-filter'),
+                  // A fixed-width chip clips a long branch name, so the hover
+                  // tip names what is actually in force instead of repeating
+                  // the generic label.
+                  title: branchFilter === '' ? t('historyFilter.branch') : branchFilter,
+                  'aria-label': t('historyFilter.branch'),
+                  'aria-haspopup': 'menu',
+                  'aria-expanded': branchMenuOpen === true,
+                  onClick: (event) => openBranchMenu(event.currentTarget.getBoundingClientRect()),
+                },
+                h('span', { className: 'git-panel-branch-filter-label' }, t('historyFilter.branch.label')),
+                h('span', { className: 'git-panel-caret' }, CARET_OPEN),
+                h('span', { className: 'git-panel-branch-filter-name' }, branchFilter === '' ? 'HEAD' : branchFilter),
+              ),
             ),
             h(
               'div',
@@ -364,6 +615,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    return { CommitColumn, HistoryColumn }
+    return { CommitColumn, HistoryColumn, BranchFilterMenu }
   } }),
 })

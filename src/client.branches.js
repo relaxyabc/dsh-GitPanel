@@ -25,12 +25,17 @@ window.__ModuleLoader__.load({
         filteredBranches, filteredRemotes, groups, message, mutate, openDiff, pickedPaths, remotes, revealFile,
         selectEverything, selectedCommit, selectedFile, selectedPaths, setBranchFilter, setGroups,
         setMenu, setMessage, setSelectedCommit, setSelectedFile, setSelectedStaged, state, t,
-        toggleAmend, togglePicked,
+        toggleAmend, togglePicked, width,
       } = props
       return (
         h(
           'div',
-          { className: cx('git-panel-col', 'git-panel-col-left') },
+          {
+            className: cx('git-panel-col', 'git-panel-col-left'),
+            // A splitter drag carries the width inline; without one the
+            // stylesheet's default stands.
+            style: typeof width === 'number' ? { width } : undefined,
+          },
           h(
             'div',
             { className: cx('git-panel-pane', 'git-panel-pane-top') },

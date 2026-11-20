@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       HISTORY_FILTER_DEBOUNCE_MS, HISTORY_VIEWPORT_PX, NO_FILES,
       rows: { ContextMenu, Dialog },
       diff: { DiffModal },
-      panes: { BranchesColumn, HistoryColumn, CommitColumn },
+      panes: { BranchesColumn, HistoryColumn, CommitColumn, BranchFilterMenu },
     } = shared
 
     /**
@@ -65,9 +65,9 @@ window.__ModuleLoader__.load({
      * @param {number} back - whole days before today; 0 is today.
      * @returns {string} the date in the date input's own format.
      */
-    /** A filter with no condition. @returns {{search: string, author: string, since: string, until: string}} the empty filter. */
+    /** A filter with no condition. @returns {{search: string, author: string, since: string, until: string, branch: string}} the empty filter. */
     function emptyFilter() {
-      return { search: '', author: '', since: '', until: '' }
+      return { search: '', author: '', since: '', until: '', branch: '' }
     }
 
     /**
@@ -75,15 +75,18 @@ window.__ModuleLoader__.load({
      *
      * The filter box has always matched a hash as well as message text, and
      * `--grep` cannot match a hash, so a hash-shaped search travels as a revision
-     * instead: the Host resolves it and answers with that one commit.
+     * instead: the Host resolves it and answers with that one commit. A branch
+     * filter travels as the revision the history is walked from, which is what
+     * makes it a query rather than a pass over the loaded page.
      *
-     * @param {{search: string, author: string, since: string, until: string}} filter - the applied filter.
+     * @param {{search: string, author: string, since: string, until: string, branch: string}} filter - the applied filter.
      * @returns {object} the `log`/`logCount` arguments, empty for an empty filter.
      */
     function logQuery(filter) {
       const query = {}
       const search = filter.search.trim()
       const author = filter.author.trim()
+      if (typeof filter.branch === 'string' && filter.branch !== '') query.branch = filter.branch
       if (search !== '') {
         if (/^[0-9a-f]{4,40}$/i.test(search)) query.ref = search
         else query.search = search
@@ -102,7 +105,7 @@ window.__ModuleLoader__.load({
      * conditions once the debounce has passed.
      *
      * @param {object} commit - the commit row.
-     * @param {{search: string, author: string, since: string, until: string}} filter - the filter to apply.
+     * @param {{search: string, author: string, since: string, until: string, branch: string}} filter - the filter to apply.
      * @returns {boolean} whether the commit stays.
      */
     function matchesFilter(commit, filter) {
@@ -123,6 +126,184 @@ window.__ModuleLoader__.load({
       day.setDate(day.getDate() - back)
       const pad = (value) => String(value).padStart(2, '0')
       return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
+    }
+
+    /** localStorage key holding the per-repository favorite-branch map. */
+    const FAVORITES_STORE_KEY = 'gitPanel.branchFavorites'
+
+    /**
+     * The session mirror of the favorite-branch map.
+     *
+     * A page without `localStorage` — the module test, a private mode that
+     * refuses writes — still gets favorites that survive within the session;
+     * wherever storage works it is the durable copy and this stays its shadow.
+     */
+    const favoritesMemory = new Map()
+
+    /** Branches a repository is seeded with as favorites on its first open, the way IDEA seeds its log filter. */
+    const SEED_FAVORITES = ['master', 'origin/master']
+
+    /**
+     * Read a repository's stored favorite branches.
+     *
+     * @param {string} repositoryPath - the repository the favorites belong to.
+     * @returns {string[]|null} the stored names, or null when nothing is stored for it yet.
+     */
+    function loadStoredFavorites(repositoryPath) {
+      try {
+        const raw = window.localStorage?.getItem(FAVORITES_STORE_KEY)
+        if (typeof raw === 'string') {
+          const map = JSON.parse(raw)
+          if (map !== null && typeof map === 'object' && Array.isArray(map[repositoryPath])) {
+            return map[repositoryPath].filter((name) => typeof name === 'string' && name !== '')
+          }
+        }
+      } catch {
+        // A missing store or an unreadable one falls through to the mirror.
+      }
+      return favoritesMemory.get(repositoryPath) ?? null
+    }
+
+    /**
+     * Store a repository's favorite branches.
+     *
+     * Both copies are written when they can be: `localStorage` for the sessions
+     * to come, the map for the pages that have no storage. A refusal to write is
+     * not an error to surface — favorites are a convenience, and the mirror
+     * still holds what this session starred.
+     *
+     * @param {string} repositoryPath - the repository the favorites belong to.
+     * @param {string[]} names - the favorite branch names, in display order.
+     * @returns {undefined} nothing.
+     */
+    function persistFavorites(repositoryPath, names) {
+      favoritesMemory.set(repositoryPath, names)
+      try {
+        let map = {}
+        const raw = window.localStorage?.getItem(FAVORITES_STORE_KEY)
+        if (typeof raw === 'string') {
+          const parsed = JSON.parse(raw)
+          if (parsed !== null && typeof parsed === 'object') map = parsed
+        }
+        map[repositoryPath] = names
+        window.localStorage?.setItem(FAVORITES_STORE_KEY, JSON.stringify(map))
+      } catch {
+        // The session mirror already carries the edit.
+      }
+    }
+
+    /** localStorage key holding the column widths the splitters resized. */
+    const LAYOUT_STORE_KEY = 'gitPanel.columnWidths'
+
+    /** The session mirror of the column widths, for pages without storage. */
+    const layoutMemory = new Map()
+
+    /** The stylesheet's default column widths, what a reset returns to. */
+    const DEFAULT_COLUMN_LEFT = 320
+    const DEFAULT_COLUMN_RIGHT = 400
+
+    /**
+     * The bounds a dragged column may take.
+     *
+     * A drag is clamped here, so no gesture can squeeze the middle column below
+     * its own minimum or push a column out of the window entirely.
+     */
+    const COLUMN_LIMITS = {
+      left: { min: 220, max: 640 },
+      right: { min: 240, max: 800 },
+    }
+
+    /**
+     * Validate one stored column width against its bounds.
+     *
+     * @param {unknown} value - the stored value.
+     * @param {{min: number, max: number}} limits - the column's bounds.
+     * @returns {number|null} the usable width, or null for the stylesheet default.
+     */
+    function storedColumnWidth(value, limits) {
+      if (typeof value !== 'number' || Number.isFinite(value) === false) return null
+      return Math.min(limits.max, Math.max(limits.min, Math.round(value)))
+    }
+
+    /**
+     * Read the resized column widths, falling back to the session mirror.
+     *
+     * @returns {{left: number|null, right: number|null}} the widths in force; null means the stylesheet default.
+     */
+    function loadStoredLayout() {
+      const fallback = layoutMemory.get(LAYOUT_STORE_KEY) ?? { left: null, right: null }
+      try {
+        const raw = window.localStorage?.getItem(LAYOUT_STORE_KEY)
+        if (typeof raw !== 'string') return fallback
+        const map = JSON.parse(raw)
+        if (map === null || typeof map !== 'object') return fallback
+        return { left: storedColumnWidth(map.left, COLUMN_LIMITS.left), right: storedColumnWidth(map.right, COLUMN_LIMITS.right) }
+      } catch {
+        return fallback
+      }
+    }
+
+    /**
+     * Store the resized column widths.
+     *
+     * @param {{left: number|null, right: number|null}} widths - the widths to keep for the next sessions.
+     * @returns {undefined} nothing.
+     */
+    function persistLayout(widths) {
+      layoutMemory.set(LAYOUT_STORE_KEY, widths)
+      try {
+        window.localStorage?.setItem(LAYOUT_STORE_KEY, JSON.stringify(widths))
+      } catch {
+        // The session mirror already carries the widths.
+      }
+    }
+
+    /**
+     * One column splitter: the grab strip between two panels of the tool.
+     *
+     * Dragging reports the candidate width through `onResize`, which the panel
+     * clamps and stores; a double-click hands back to `onReset` for the
+     * stylesheet's default. The strip captures the pointer, so the drag keeps
+     * reporting here even when the cursor leaves the strip mid-drag.
+     *
+     * @param {object} props - splitter inputs.
+     * @param {number} props.width - the width of the column this strip resizes.
+     * @param {boolean} [props.invert] - whether a rightward drag shrinks the column (the right one).
+     * @param {Function} props.onResize - called with the candidate width on every move.
+     * @param {Function} props.onReset - called when the strip is double-clicked.
+     * @param {Function} props.t - the translator.
+     * @returns {object} the splitter element.
+     */
+    function ColumnSplitter({ width, invert, onResize, onReset, t }) {
+      // The drag's starting pointer and width. A ref, not state: the moves read
+      // it without a render of their own; only the strip's look needs state.
+      const start = React.useRef(null)
+      const [dragging, setDragging] = React.useState(false)
+      return h('div', {
+        className: cx('git-panel-splitter', dragging === true ? 'git-panel-splitter-drag' : false),
+        role: 'separator',
+        'aria-orientation': 'vertical',
+        'aria-label': t('layout.resize'),
+        title: t('layout.resize'),
+        onPointerDown: (event) => {
+          event.preventDefault()
+          start.current = { x: event.clientX, width }
+          setDragging(true)
+          event.currentTarget?.setPointerCapture?.(event.pointerId)
+        },
+        onPointerMove: (event) => {
+          if (start.current === null) return
+          const dx = event.clientX - start.current.x
+          onResize(start.current.width + (invert === true ? -dx : dx))
+        },
+        onPointerUp: (event) => {
+          if (start.current === null) return
+          start.current = null
+          setDragging(false)
+          event.currentTarget?.releasePointerCapture?.(event.pointerId)
+        },
+        onDoubleClick: () => onReset(),
+      })
     }
 
     /**
@@ -213,6 +394,53 @@ window.__ModuleLoader__.load({
       // keystroke; the query is what the pages and the count are read for.
       const [historyFilter, setHistoryFilter] = React.useState(emptyFilter)
       const [logFilter, setLogFilter] = React.useState(emptyFilter)
+      // The branch filter popup: null while closed, the chip's anchor rectangle
+      // once opened. The popup itself is stateless apart from its search box.
+      // Named apart from the branch context-menu builder further down.
+      const [branchPopup, setBranchPopup] = React.useState(null)
+      // The branches recently checked out, read from the Host's reflog when the
+      // popup opens. null means "not read yet", so the section stays hidden
+      // until an answer arrives instead of flashing empty.
+      const [recentBranches, setRecentBranches] = React.useState(null)
+      // The popup's search box. The panel owns it, like the history filter, so
+      // it resets on every open and close instead of remembering a narrowing
+      // the popup is not showing.
+      const [branchSearch, setBranchSearch] = React.useState('')
+      // The favorite branches of the repository in force: the starred set the
+      // popup shows first, persisted per repository in the browser.
+      const [favorites, setFavorites] = React.useState([])
+      // The column widths the splitters resize, persisted across sessions.
+      // null means the stylesheet's default width.
+      const [columnWidths, setColumnWidths] = React.useState(loadStoredLayout)
+
+      // Width edits are stored as they land, so a reload keeps the layout; a
+      // page without storage keeps them in the session mirror instead.
+      React.useEffect(() => {
+        persistLayout(columnWidths)
+      }, [columnWidths])
+
+      /**
+       * Resize one column, clamped to what keeps the panel usable.
+       *
+       * @param {'left'|'right'} side - the column the drag moves.
+       * @param {number} candidate - the width the drag arrived at.
+       * @returns {undefined} nothing.
+       */
+      function resizeColumn(side, candidate) {
+        const limits = COLUMN_LIMITS[side]
+        const next = Math.min(limits.max, Math.max(limits.min, Math.round(candidate)))
+        setColumnWidths((current) => (current[side] === next ? current : { ...current, [side]: next }))
+      }
+
+      /**
+       * Return one column to the stylesheet's default width.
+       *
+       * @param {'left'|'right'} side - the column being reset.
+       * @returns {undefined} nothing.
+       */
+      function resetColumn(side) {
+        setColumnWidths((current) => (current[side] === null ? current : { ...current, [side]: null }))
+      }
       // The window of history rows the list renders. The panel owns it because
       // the scroll that moves it is also the scroll that reads the next page.
       const [historyViewport, setHistoryViewport] = React.useState({ top: 0, height: HISTORY_VIEWPORT_PX })
@@ -583,6 +811,13 @@ window.__ModuleLoader__.load({
         setSelectedPaths(new Set())
         setAmendMode(false)
         amendDraft.current = ''
+        // The popup belongs to the chip it opened from, and the recent list to
+        // the repository it was read from. The branch filter names a ref of the
+        // repository it was chosen in — another repository would refuse it — so
+        // it goes back to HEAD with the selection.
+        setBranchPopup(null)
+        setRecentBranches(null)
+        setHistoryFilter((value) => (value.branch === '' ? value : { ...value, branch: '' }))
       }, [repository?.path, workspaceRoot])
 
       // A commit's changed paths are read only once that commit is selected.
@@ -758,6 +993,60 @@ window.__ModuleLoader__.load({
 
       const closeMenu = React.useCallback(() => setMenu(null), [])
 
+      const closeBranchPopup = React.useCallback(() => {
+        setBranchPopup(null)
+        setBranchSearch('')
+      }, [])
+
+      /**
+       * Open the branch filter popup under its chip and read the recent list.
+       *
+       * The reflog read is one bounded, millisecond-scale call, made when the
+       * popup asks for it rather than with every state refresh. An older Host
+       * that does not know the operation costs the popup its recent section and
+       * nothing else, so the failure is swallowed rather than reported.
+       *
+       * @param {object} rect - the chip's bounding rectangle, the popup's anchor.
+       * @returns {undefined} nothing.
+       */
+      function openBranchMenu(rect) {
+        setBranchPopup({ left: rect?.left ?? 0, top: rect?.bottom ?? 0 })
+        setBranchSearch('')
+        if (repository === null) return
+        callHost('recentBranches', { workspaceRoot, path: repository.path })
+          .then((payload) => setRecentBranches(Array.isArray(payload?.branches) ? payload.branches.filter((name) => typeof name === 'string') : []))
+          .catch(() => setRecentBranches([]))
+      }
+
+      /**
+       * Point the history at one branch, closing the popup. An empty name is
+       * HEAD: the default walk the panel reads when no branch is named.
+       *
+       * @param {string} name - the branch to filter by, empty for HEAD.
+       * @returns {undefined} nothing.
+       */
+      function pickBranch(name) {
+        setBranchPopup(null)
+        setBranchSearch('')
+        setHistoryFilter((value) => ({ ...value, branch: name }))
+      }
+
+      /**
+       * Star or unstar one branch for this repository.
+       *
+       * The set is persisted as it changes, so the next session opens with the
+       * same stars; a write that the page cannot make still holds for the
+       * session through the mirror.
+       *
+       * @param {string} name - the branch to toggle.
+       * @returns {undefined} nothing.
+       */
+      function toggleFavorite(name) {
+        const next = favorites.includes(name) ? favorites.filter((entry) => entry !== name) : [...favorites, name]
+        setFavorites(next)
+        if (repository !== null) persistFavorites(repository.path, next)
+      }
+
       /** The working-tree files as the Host last reported them. */
       const files = state?.files ?? NO_FILES
 
@@ -815,6 +1104,30 @@ window.__ModuleLoader__.load({
       const branches = state?.branches ?? []
       const remotes = state?.remotes ?? []
       const currentBranch = state?.branch ?? null
+
+      // The favorite branches of the repository in force. A stored set wins; a
+      // repository opened for the first time is seeded the way IDEA seeds its
+      // log filter — the checked-out branch, then master and origin/master,
+      // each only when it exists. The seed is persisted at once, so a set the
+      // user emptied stays empty instead of being dealt back in on the next
+      // checkout. Seeding waits for the state read, the only place that knows
+      // which of the seed names exist.
+      React.useEffect(() => {
+        if (repository === null || state === null) {
+          if (repository === null) setFavorites([])
+          return undefined
+        }
+        const stored = loadStoredFavorites(repository.path)
+        if (stored !== null) {
+          setFavorites(stored)
+          return undefined
+        }
+        const known = new Set([...(state.branches ?? []), ...(state.remotes ?? [])].map((entry) => entry.name))
+        const seed = [currentBranch, ...SEED_FAVORITES].filter((name) => typeof name === 'string' && name !== '' && known.has(name))
+        persistFavorites(repository.path, seed)
+        setFavorites(seed)
+        return undefined
+      }, [repository, currentBranch, state])
 
       /**
        * Copy text, reporting the outcome.
@@ -1144,15 +1457,15 @@ window.__ModuleLoader__.load({
       const filteredRemotes = remotes.filter((entry) => filter === '' || entry.name.toLowerCase().includes(filter))
 
       /** Whether any history filter condition is set. */
-      const historyFilterActive = historyFilter.search !== '' || historyFilter.author !== '' || historyFilter.since !== '' || historyFilter.until !== ''
+      const historyFilterActive = historyFilter.search !== '' || historyFilter.author !== '' || historyFilter.since !== '' || historyFilter.until !== '' || historyFilter.branch !== ''
 
       /**
-       * Clear every history filter at once.
+       * Clear every history filter at once, the branch with the rest.
        *
        * @returns {undefined} nothing.
        */
       function clearHistoryFilter() {
-        setHistoryFilter({ search: '', author: '', since: '', until: '' })
+        setHistoryFilter(emptyFilter())
       }
 
       /**
@@ -1334,25 +1647,59 @@ window.__ModuleLoader__.load({
                   mutate, openDiff, pickedPaths, remotes, revealFile, selectEverything, selectedCommit,
                   selectedFile, selectedPaths, setBranchFilter, setGroups, setMenu, setMessage,
                   setSelectedCommit, setSelectedFile, setSelectedStaged, state, t, toggleAmend,
-                  togglePicked,
+                  togglePicked, width: columnWidths.left,
+                }),
+                // The strip between the columns resizes the column on its left;
+                // a rightward drag widens the left one and narrows the right one,
+                // which is what `invert` says.
+                h(ColumnSplitter, {
+                  width: columnWidths.left ?? DEFAULT_COLUMN_LEFT,
+                  onResize: (candidate) => resizeColumn('left', candidate),
+                  onReset: () => resetColumn('left'),
+                  t,
                 }),
                 // ---- middle: history ------------------------------------------
                 h(HistoryColumn, {
                   activeRange, applyQuickRange, autoLoading: logAutoLoading,
-                  capped: logHasMore === true && commits.length >= logCap, clearHistoryFilter, commitMenu,
+                  branchFilter: historyFilter.branch, branchMenuOpen: branchPopup !== null, capped: logHasMore === true && commits.length >= logCap, clearHistoryFilter, commitMenu,
                   commits, filteredCommits, historyFilter, historyFilterActive, loadMore: loadMoreCommits,
                   loadingMore: logLoadingMore, more: logHasMore, onLoadAll: loadAllCommits,
                   onRaiseCap: raiseLoadCap, onScroll: onHistoryScroll, onStopLoad: stopLoadingAll,
-                  quickRanges, selectedCommit, setHistoryFilter, setMenu, setSelectedCommit,
+                  openBranchMenu, quickRanges, selectedCommit, setHistoryFilter, setMenu, setSelectedCommit,
                   setSelectedFile, staleFilter, t, total: logTotal, viewport: historyViewport,
+                }),
+                h(ColumnSplitter, {
+                  invert: true,
+                  width: columnWidths.right ?? DEFAULT_COLUMN_RIGHT,
+                  onResize: (candidate) => resizeColumn('right', candidate),
+                  onReset: () => resetColumn('right'),
+                  t,
                 }),
                 // ---- right: the commit message above, its files below ---------
                 h(CommitColumn, {
                   commitFiles, commitMessageMenu, filesError, filesLoading, openDiff,
                   selectedCommit: detailCommit, selectedFile, setMenu, setSelectedFile, t,
+                  width: columnWidths.right,
                 }),
               ),
         menu === null ? null : h(ContextMenu, { menu, onClose: closeMenu }),
+        branchPopup === null
+          ? null
+          : h(BranchFilterMenu, {
+              anchor: branchPopup,
+              branches,
+              remotes,
+              currentBranch,
+              favorites,
+              recent: recentBranches,
+              search: branchSearch,
+              onSearch: setBranchSearch,
+              selected: historyFilter.branch,
+              onPick: pickBranch,
+              onToggleFavorite: toggleFavorite,
+              onClose: closeBranchPopup,
+              t,
+            }),
         dialog === null ? null : h(Dialog, { dialog, onClose: () => setDialog(null), t }),
         diffOpen && activeFile !== null && repository !== null ? h(DiffModal, { file: activeFile, commit: selectedCommit, text: diff, stale: staleHost, whole: wholeFileDiff, onClose: () => setDiffOpen(false), t }) : null,
       )

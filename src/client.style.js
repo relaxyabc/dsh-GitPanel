@@ -40,9 +40,16 @@ window.__ModuleLoader__.load({
       '.git-panel-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 26%,transparent)}',
       '.git-panel-cols{flex:1;min-height:0;display:flex}',
       '.git-panel-col{display:flex;flex-direction:column;min-height:0;min-width:0}',
-      '.git-panel-col-left{width:320px;flex:none;border-right:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-col-left{width:320px;flex:none}',
       '.git-panel-col-mid{flex:1;min-width:220px}',
-      '.git-panel-col-right{width:400px;flex:none;border-left:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-col-right{width:400px;flex:none}',
+      // The column dividers are the splitters themselves: a 9px grab strip whose
+      // centered line is the border the columns used to draw. Hovering or
+      // dragging thickens it and tints it with the brand color, so the handle
+      // announces itself without changing the resting look.
+      '.git-panel-splitter{position:relative;flex:none;width:9px;cursor:col-resize;touch-action:none;user-select:none}',
+      '.git-panel-splitter::before{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      '.git-panel-splitter:hover::before,.git-panel-splitter-drag::before{left:3px;width:2px;background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 55%,transparent)}',
       '.git-panel-pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}',
       // The pane does not grow: the free space belongs to the working tree, whose
       // commit box is the tall one and must not be squeezed out of its pane.
@@ -65,6 +72,18 @@ window.__ModuleLoader__.load({
       '.git-panel-filters-row .git-panel-input{flex:1 1 96px;font-size:11.5px}',
       '.git-panel-filters-row .git-panel-input[type=date]{flex:1 1 104px}',
       '.git-panel-filters-row .git-panel-select{flex:none;font-size:11.5px}',
+      // The branch filter chip: the same select-shaped button the other filters
+      // use, at a fixed width so the row never reflows when the filter switches
+      // between HEAD and a long branch name — the name clips inside instead.
+      // The width carries the row selector on purpose: the shared
+      // `.git-panel-filters-row .git-panel-select` flex rule would otherwise
+      // outrank a bare class rule and leave the chip content-sized again.
+      '.git-panel-branch-filter{display:flex;align-items:center;gap:3px;font-size:11.5px}',
+      '.git-panel-filters-row .git-panel-branch-filter{flex:0 1 220px;min-width:0}',
+      // The IDEA-style two-part chip: a constant "Branch ▾" label that names the
+      // dropdown, then the value, which is the only part that ever changes.
+      '.git-panel-branch-filter-label{flex:none;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-branch-filter-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.git-panel-row{display:flex;align-items:center;gap:7px;padding:3px 10px;cursor:default}',
       '.git-panel-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
       '.git-panel-row-sel,.git-panel-row-sel:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#0969da) 18%,transparent)}',
@@ -176,6 +195,21 @@ window.__ModuleLoader__.load({
       '.git-panel-ctx-item:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16))}',
       '.git-panel-ctx-item:disabled{opacity:.5;cursor:default}',
       '.git-panel-ctx-sep{height:1px;margin:3px 0;background:var(--dsw-alias-border-l1,rgba(128,128,128,.2))}',
+      // The branch filter popup hangs under the chip it opened from and scrolls
+      // when a repository carries more branches than a screenful: the sections
+      // (recent, favorites, local, per remote) stack inside it like IDEA's log
+      // filter, each a labelled run of starred rows.
+      '.git-panel-branch-menu{position:fixed;z-index:90;display:flex;flex-direction:column;gap:1px;padding:5px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 8px 28px rgba(0,0,0,.24);max-height:min(420px,70vh);overflow:auto}',
+      '.git-panel-branch-menu-search{flex:none;margin-bottom:3px;font-size:11.5px}',
+      '.git-panel-branch-menu-head{padding:5px 8px 2px;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-branch-menu-item{display:flex;align-items:center;gap:2px;padding:0 3px;border-radius:4px}',
+      '.git-panel-branch-menu-item:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.1))}',
+      '.git-panel-branch-menu-star,.git-panel-branch-menu-spacer{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:4px;background:none;color:var(--dsw-alias-label-tertiary,#8b949e);font:inherit;cursor:pointer}',
+      '.git-panel-branch-menu-star:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.16));color:var(--dsw-alias-label-secondary,#57606a)}',
+      '.git-panel-branch-menu-star-on{color:var(--dsw-alias-state-warn-primary,#9a6700)}',
+      '.git-panel-branch-menu-name{flex:1;display:flex;align-items:center;gap:6px;min-width:0;padding:4px 6px;border:0;border-radius:4px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+      '.git-panel-branch-menu-name .git-panel-branch{flex:1 1 auto}',
+      '.git-panel-branch-menu-empty{padding:6px 8px;font-size:11px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-scrim{position:fixed;inset:0;z-index:89}',
       '.git-panel-dialog{position:fixed;z-index:91;top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,90vw);display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.3));background:var(--dsw-alias-bg-overlay,#fff);box-shadow:0 12px 44px rgba(0,0,0,.3)}',
       '.git-panel-dialog-title{font-weight:600}',

@@ -191,6 +191,8 @@ window.__ModuleLoader__.load({
     const DOWN = '\u2193'
     const DASH = '\u2014'
     const CLOSE_GLYPH = '\u00d7'
+    const STAR_GLYPH = '\u2605'
+    const STAR_OPEN_GLYPH = '\u2606'
 
     /**
      * Post one operation to the Host half.
@@ -552,6 +554,8 @@ window.__ModuleLoader__.load({
         CLOSE_GLYPH,
         DASH,
         ENTER_GLYPH,
+        STAR_GLYPH,
+        STAR_OPEN_GLYPH,
         UP,
         DOWN,
         // Limits and identities.

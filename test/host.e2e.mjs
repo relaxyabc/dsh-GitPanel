@@ -461,6 +461,26 @@ try {
     (featureLog.body.data?.commits ?? []).map((entry) => entry.subject),
   )
 
+  // ---- recent branches -----------------------------------------------------------
+  console.log('\nrecent branches')
+  // Two detached hops first: a move onto HEAD names no branch, and the reflog
+  // walk has to drop it instead of offering an unpickable entry.
+  git(alpha, ['checkout', commits[1].hash])
+  git(alpha, ['checkout', 'main'])
+  const recent = await call('recentBranches', { workspaceRoot: root, path: 'alpha' })
+  check(recent.body.ok === true, 'recentBranches succeeds', recent.body)
+  check(
+    JSON.stringify(recent.body.data?.branches) === JSON.stringify(['main', 'feature/x']),
+    'the reflog lists the checked-out branches newest first, without detached moves',
+    recent.body.data?.branches,
+  )
+  // beta never left its branch: the convenience answers an empty list rather
+  // than pretending a checkout happened.
+  const noRecent = await call('recentBranches', { workspaceRoot: root, path: 'nested/deep/beta' })
+  check(noRecent.body.ok === true && (noRecent.body.data?.branches ?? []).length === 0, 'a repository without checkouts answers no recent branches', noRecent.body.data)
+  check((await call('recentBranches', { workspaceRoot: root, path: '../beta' })).body.ok === false, 'a path outside the workspace root is refused')
+  check((await call('recentBranches', { path: 'alpha' })).body.ok === false, 'recentBranches without a workspace root is refused')
+
   // ---- amend -------------------------------------------------------------------
   console.log('\namend')
   const amended = await call('amend', { workspaceRoot: root, path: 'alpha', message: 'test: amended subject' })
