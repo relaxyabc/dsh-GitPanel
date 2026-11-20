@@ -56,6 +56,11 @@ window.__ModuleLoader__.load({
       '.git-panel-pane-top{flex:0 1 40%;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
       '.git-panel-pane-grow{flex:1}',
       '.git-panel-pane-head{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap;padding:5px 9px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18))}',
+      // A head that gains or loses a button — the history head grows the
+      // "clear filters" one while a filter is active — must not change height
+      // and shift the filter block below it, so head buttons are trimmed to
+      // the pane title's own line height.
+      '.git-panel-pane-head .git-panel-btn{line-height:1;padding:1px 8px}',
       '.git-panel-pane-title{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#57606a);white-space:nowrap}',
       '.git-panel-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary,#57606a)}',
       '.git-panel-list{flex:1;min-height:0;overflow:auto;padding:3px 0 8px}',
